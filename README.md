@@ -31,8 +31,15 @@ The system uses a two-stage neural drum transcription pipeline, neural onset det
                               └──────┬───────┘
                                      │
                               ┌──────▼───────┐
-                              │   Demucs v4  │
-                              │  Separation  │
+                              │ Mel-Band     │
+                              │ RoFormer     │──► lead vocals
+                              │ Karaoke      │
+                              └──────┬───────┘
+                                     │ instrumental
+                              ┌──────▼───────┐
+                              │  Demucs v4   │
+                              │      or      │
+                              │BS-RoFormer SW│
                               └──────┬───────┘
                                      │
               ┌──────────┬───────────┼───────────┬──────────┐
@@ -311,12 +318,14 @@ Developed on NVIDIA DGX Spark (GB10 GPU, CUDA 12.8). Trained on ~5,000 human-aut
 
 ## Documentation
 
+- [Separation](docs/SEPARATION.md) — Karaoke pre-separation and 6-stem backends
 - [Architecture](docs/ARCHITECTURE.md) — Technical specification
 - [Roadmap](docs/ROADMAP.md) — Development milestones
 
 ## Acknowledgments
 
 - [Demucs](https://github.com/adefossez/demucs) — Audio source separation
+- [Mel-Band RoFormer](https://github.com/ZFTurbo/Music-Source-Separation-Training) / [BS-RoFormer SW](https://huggingface.co/jarredou/BS-ROFO-SW-Fixed) — Karaoke and 6-stem separation
 - [OpenAI Whisper](https://github.com/openai/whisper) — Speech recognition
 - [librosa](https://librosa.org/) — Audio analysis
 - Clone Hero / YARG communities — Chart format documentation

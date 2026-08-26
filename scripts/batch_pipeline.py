@@ -414,13 +414,25 @@ class BatchPipeline:
         return metadata
 
     def separate_stems(self, audio_path: Path, work_dir: Path) -> Dict[str, Path]:
-        """Separate stems using Demucs Python API (avoids torchaudio save bug).
+        """Separate stems with the configured backend.
+
+        STRUM_SEPARATOR selects the 6-stem model: "demucs" (default, via the
+        Demucs Python API, which avoids the torchaudio save bug) or
+        "bs_roformer_sw" (BS-RoFormer SW through MSST). Both emit the same stem
+        names, so downstream stages are unaffected by the choice.
 
         Runs the configured `demucs_model` (default htdemucs_6s) for guitar/bass/
         vocals/keys/other. If `STRUM_DRUMS_DEMUCS` is set (default 'htdemucs_ft'),
         runs that model in addition and uses ITS drum stem — matches what the
         production drums pipeline (`batch_infer_hybrid`) and tom_refinement_demucs
         checkpoint were tuned on.
+
+        When karaoke pre-separation is enabled (default), a Mel-Band RoFormer
+        karaoke model strips the lead vocal first and Demucs is fed the
+        instrumental instead of the raw mix. That keeps sung melodies out of the
+        `other`/`guitar`/`piano` stems, where basic-pitch would otherwise
+        transcribe them as phantom guitar notes. The karaoke model's lead vocal
+        also replaces the Demucs `vocals` stem, since it is the better isolate.
         """
         import os
         import soundfile as sf
@@ -428,7 +440,7 @@ class BatchPipeline:
         from demucs.apply import apply_model
         import torch
 
-        logger.info("  Separating stems with Demucs...")
+        logger.info("  Separating stems...")
 
         stem_dir = work_dir / "stems"
         stem_dir.mkdir(parents=True, exist_ok=True)
@@ -441,11 +453,21 @@ class BatchPipeline:
         if all((stem_dir / f"{s}.wav").exists() for s in expected_stems):
             logger.info("    Stems already exist, skipping separation")
             stems = {s: stem_dir / f"{s}.wav" for s in expected_stems}
-            for extra in ["guitar", "piano"]:
+            for extra in ["guitar", "piano", "backing_vocals"]:
                 p = stem_dir / f"{extra}.wav"
                 if p.exists():
                     stems[extra] = p
             return stems
+
+        # Stage 0: karaoke pre-separation. Returns {} when disabled or when the
+        # model is unavailable, in which case Demucs sees the raw mix as before.
+        from src.preprocessing.karaoke import separate_karaoke
+
+        demucs_input = audio_path
+        karaoke = separate_karaoke(audio_path, stem_dir / "karaoke")
+        if karaoke:
+            demucs_input = karaoke["instrumental"]
+            logger.info("    Demucs input: lead-vocal-free instrumental")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -453,7 +475,7 @@ class BatchPipeline:
             model = get_model(model_name)
             model.eval()
             model.to(device)
-            y, sr_orig = librosa.load(str(audio_path), sr=None, mono=False)
+            y, sr_orig = librosa.load(str(demucs_input), sr=None, mono=False)
             if y.ndim == 1:
                 y = np.stack([y, y])
             target_sr = model.samplerate
@@ -466,15 +488,39 @@ class BatchPipeline:
             sources = sources * ref.std() + ref.mean()
             return model.sources, sources, target_sr
 
-        # Primary model (6s for guitar/piano/etc)
-        names, sources, target_sr = _run_model(self.demucs_model)
-        stems = {}
-        for i, name in enumerate(names):
-            stem = sources[i].cpu().numpy()
-            path = stem_dir / f"{name}.wav"
-            sf.write(str(path), stem.T, target_sr)
-            stems[name] = path
-        logger.info(f"    Separated stems ({self.demucs_model}): {list(stems.keys())}")
+        # Stage 1: 6-stem separation. BS-RoFormer SW is a full alternative to
+        # Demucs over the same stem set; it returns {} when its weights are not
+        # configured or inference fails, and we fall through to Demucs.
+        stems: Dict[str, Path] = {}
+        separator = os.environ.get("STRUM_SEPARATOR", "demucs").strip().lower()
+        if separator in ("bs_roformer_sw", "bs_roformer", "roformer"):
+            from src.preprocessing.roformer import separate_6stem_roformer
+
+            stems = separate_6stem_roformer(demucs_input, stem_dir)
+            if not stems:
+                logger.info("    Falling back to Demucs")
+
+        if not stems:
+            # Primary model (6s for guitar/piano/etc)
+            names, sources, target_sr = _run_model(self.demucs_model)
+            for i, name in enumerate(names):
+                stem = sources[i].cpu().numpy()
+                path = stem_dir / f"{name}.wav"
+                sf.write(str(path), stem.T, target_sr)
+                stems[name] = path
+            logger.info(f"    Separated stems ({self.demucs_model}): {list(stems.keys())}")
+
+        # The karaoke isolate beats the Demucs vocal branch, and Demucs only saw
+        # the instrumental anyway — its `vocals` stem here is near-silent.
+        if karaoke:
+            vocals_path = stem_dir / "vocals.wav"
+            shutil.copy2(karaoke["lead_vocals"], vocals_path)
+            stems["vocals"] = vocals_path
+            if "backing_vocals" in karaoke:
+                backing_path = stem_dir / "backing_vocals.wav"
+                shutil.copy2(karaoke["backing_vocals"], backing_path)
+                stems["backing_vocals"] = backing_path
+            logger.info("    Vocals stem sourced from karaoke model")
 
         # Drums-specialist pass (htdemucs_ft) — overwrites drums.wav with the
         # higher-quality drum stem that production drums pipeline expects.

@@ -21,6 +21,8 @@ def separate_stems(
     device: Optional[str] = None,
     shifts: int = 1,
     overlap: float = 0.25,
+    backend: Optional[str] = None,
+    karaoke: Optional[bool] = None,
 ) -> dict[str, Path]:
     """
     Separate audio file into stems using Demucs.
@@ -35,10 +37,17 @@ def separate_stems(
         device: Device to run on (cuda, cpu, or None for auto)
         shifts: Number of random shifts for better quality
         overlap: Overlap between segments
+        backend: "demucs" (default) or "bs_roformer_sw". BS-RoFormer SW emits the
+            same six stem names but runs through an MSST checkout; it falls back
+            to Demucs when its weights are not configured.
+        karaoke: Run Mel-Band RoFormer karaoke pre-separation first, so the
+            6-stem model never sees the lead vocal. None reads STRUM_KARAOKE.
         
     Returns:
-        Dictionary mapping stem names to output paths
+        Dictionary mapping stem names to output paths. Includes `lead_vocals`
+        (and `backing_vocals`, when the backing split ran) if karaoke was used.
     """
+    from src.preprocessing.karaoke import KaraokeConfig, separate_karaoke
     from demucs.pretrained import get_model
     from demucs.separate import load_track
     from demucs.apply import apply_model
@@ -51,7 +60,32 @@ def separate_stems(
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    logger.info(f"Separating {audio_path} with {model_name} on {device}")
+    # Stage 0: strip the lead vocal before the 6-stem model sees the mix.
+    kcfg = KaraokeConfig.from_env()
+    if karaoke is not None:
+        kcfg.enabled = karaoke
+    karaoke_stems = separate_karaoke(audio_path, output_dir / "karaoke", kcfg)
+    separation_input = karaoke_stems.get("instrumental", audio_path)
+    # `instrumental` is an intermediate, not a chartable stem — keep it out of
+    # the returned mapping so downstream stage loops never pick it up.
+    karaoke_stems = {k: v for k, v in karaoke_stems.items() if k != "instrumental"}
+
+    # Stage 1: BS-RoFormer SW if selected and available, else Demucs.
+    import os
+
+    backend = (backend or os.environ.get("STRUM_SEPARATOR", "demucs")).strip().lower()
+    if backend in ("bs_roformer_sw", "bs_roformer", "roformer"):
+        from src.preprocessing.roformer import separate_6stem_roformer
+
+        stems = separate_6stem_roformer(separation_input, output_dir)
+        if stems:
+            stems.update(karaoke_stems)
+            if "lead_vocals" in karaoke_stems:
+                stems["vocals"] = karaoke_stems["lead_vocals"]
+            return stems
+        logger.info("Falling back to Demucs")
+
+    logger.info(f"Separating {separation_input} with {model_name} on {device}")
     
     # Load model
     model = get_model(model_name)
@@ -59,7 +93,7 @@ def separate_stems(
     model.eval()
     
     # Load audio
-    wav = load_track(audio_path, model.audio_channels, model.samplerate)
+    wav = load_track(separation_input, model.audio_channels, model.samplerate)
     ref = wav.mean(0)
     wav = (wav - ref.mean()) / ref.std()
     
@@ -92,6 +126,12 @@ def separate_stems(
         stem_paths[stem_name] = stem_path
         logger.debug(f"Saved {stem_name} to {stem_path}")
     
+    # The karaoke isolate is a better vocal stem than the Demucs branch, which
+    # here only saw an instrumental anyway.
+    stem_paths.update(karaoke_stems)
+    if "lead_vocals" in karaoke_stems:
+        stem_paths["vocals"] = karaoke_stems["lead_vocals"]
+
     logger.info(f"Separation complete. Stems: {list(stem_paths.keys())}")
     
     # Free GPU memory from Demucs model

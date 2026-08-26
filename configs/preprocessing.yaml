@@ -7,6 +7,32 @@ audio:
   target_lufs: -14.0
   supported_formats: [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
 
+# Stage 0: karaoke pre-separation (Mel-Band RoFormer).
+# Strips the LEAD vocal before the 6-stem pass so sung melodies stop bleeding
+# into the other/guitar/piano stems and showing up as phantom basic-pitch notes.
+# Backing vocals survive into `instrumental` by design — karaoke models are
+# trained to remove the lead only. Env overrides: STRUM_KARAOKE_*.
+karaoke:
+  enabled: true
+  backend: audio-separator      # or "msst" for becruily/gabox checkpoints
+  model: mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt
+  # Second pass: lift backing vocals into their own stem so the 6-stem model
+  # gets a fully vocal-free mix and HARM2/HARM3 get a clean source.
+  # Recommended on; off by default to preserve the single-pass behaviour.
+  backing_split: false
+  backing_model: model_bs_roformer_ep_317_sdr_12.9755.ckpt
+
+# Stage 1 backend: "demucs" or "bs_roformer_sw". Both emit the same stem names.
+# BS-RoFormer SW needs STRUM_ROFORMER_CKPT / STRUM_ROFORMER_CFG / an MSST checkout.
+separator: demucs
+
+roformer:
+  model_type: bs_roformer
+  ckpt: null                    # bs_6stem_fixed.ckpt
+  config: null                  # bs_6stem_fixed_config.yaml
+  msst_dir: null
+  timeout_s: 2400
+
 # Demucs separation
 demucs:
   model: htdemucs

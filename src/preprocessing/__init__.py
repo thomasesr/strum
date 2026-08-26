@@ -20,3 +20,9 @@ try:
 except ImportError:
     StemsExtractor = None
     check_extraction_tools = None
+
+try:
+    from src.preprocessing.karaoke import KaraokeConfig, separate_karaoke
+except ImportError:
+    KaraokeConfig = None
+    separate_karaoke = None
