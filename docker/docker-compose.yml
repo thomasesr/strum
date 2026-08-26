@@ -1,0 +1,56 @@
+# STRUM auto-charter.
+#
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Bind address and port come from the environment, so a .env file next to this
+# one (or plain shell exports) is all it takes to move the service:
+#
+#   STRUM_BIND=127.0.0.1   # host interface to publish on; 0.0.0.0 for LAN
+#   STRUM_PORT=8000
+#
+# The default binds to localhost only. There is no authentication, and the
+# service spends GPU time on any request it accepts, so only widen STRUM_BIND
+# to a network you trust.
+
+services:
+  strum-web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: strum-web:latest
+    restart: unless-stopped
+
+    ports:
+      - "${STRUM_BIND:-127.0.0.1}:${STRUM_PORT:-8000}:8000"
+
+    environment:
+      STRUM_WEB_HOST: "0.0.0.0"          # inside the container; the port mapping above is what limits reach
+      STRUM_WEB_PORT: "8000"
+      STRUM_WEB_DATA_DIR: "/data"
+      STRUM_WEB_MAX_UPLOAD_MB: "${STRUM_MAX_UPLOAD_MB:-300}"
+      STRUM_WEB_RETAIN_HOURS: "${STRUM_RETAIN_HOURS:-24}"
+      # Separation defaults; the web UI can override these per job.
+      STRUM_KARAOKE: "${STRUM_KARAOKE:-1}"
+      STRUM_SEPARATOR: "${STRUM_SEPARATOR:-demucs}"
+      STRUM_DRUMS_DEMUCS: "${STRUM_DRUMS_DEMUCS:-htdemucs_ft}"
+      STRUM_MSST_DIR: "/models/msst"
+
+    volumes:
+      - strum-data:/data                  # uploads, job output, packages
+      - ../checkpoints:/app/checkpoints:ro   # STRUM model weights
+      - strum-models:/models              # separation weights + torch/demucs cache
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Separation is memory-hungry; the default 64 MB is far too small.
+    shm_size: "2gb"
+
+volumes:
+  strum-data:
+  strum-models:

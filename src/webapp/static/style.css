@@ -1,0 +1,117 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #262b36;
+  --text: #e7eaf0;
+  --muted: #949cad;
+  --accent: #ff8a3d;
+  --ok: #4ade80;
+  --bad: #f87171;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2rem 1rem 4rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header { max-width: 720px; margin: 0 auto 2rem; }
+h1 { margin: 0; font-size: 1.6rem; letter-spacing: .04em; }
+h1 span { color: var(--muted); font-weight: 400; margin-left: .5rem; }
+h2 { margin: 1.5rem 0 .6rem; font-size: .78rem; text-transform: uppercase;
+     letter-spacing: .1em; color: var(--muted); }
+h2:first-child { margin-top: 0; }
+.sub { margin: .4rem 0 0; color: var(--muted); }
+
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 1.25rem; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+
+/* drop zone */
+.drop {
+  display: grid; place-items: center; gap: .3rem;
+  padding: 2.5rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.drop:hover, .drop:focus-visible, .drop.over {
+  border-color: var(--accent);
+  background: #ff8a3d0d;
+  outline: none;
+}
+.drop svg { width: 34px; height: 34px; fill: none; stroke: var(--muted);
+            stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.drop span, .drop small { color: var(--muted); }
+.drop small { font-size: .78rem; }
+.picked { margin: .9rem 0 0; color: var(--accent); font-size: .9rem; }
+
+/* options */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .5rem .9rem; }
+.grid label { display: flex; align-items: center; gap: .5rem; cursor: pointer; }
+.grid label.wide { grid-column: 1 / -1; gap: .6rem; color: var(--muted); }
+input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+select {
+  flex: 1; padding: .4rem .6rem; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+
+button { font: inherit; cursor: pointer; border-radius: 8px; }
+.primary {
+  margin-top: 1.4rem; width: 100%; padding: .7rem 1rem;
+  border: 0; background: var(--accent); color: #1a1005; font-weight: 600;
+}
+.primary:disabled { opacity: .4; cursor: not-allowed; }
+.ghost {
+  padding: .4rem .8rem; background: transparent;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.ghost:hover { color: var(--text); border-color: var(--muted); }
+
+.error { margin: .8rem 0 0; color: var(--bad); font-size: .9rem; }
+.muted { color: var(--muted); margin: 0; }
+
+/* jobs */
+.jobs { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem; }
+.job { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; }
+.job-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.job-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-detail { margin: .35rem 0 0; color: var(--muted); font-size: .88rem; }
+
+.badge {
+  flex: none; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+  padding: .18rem .5rem; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.job[data-status=done] .badge { color: var(--ok); border-color: var(--ok); }
+.job[data-status=failed] .badge, .job[data-status=cancelled] .badge {
+  color: var(--bad); border-color: var(--bad);
+}
+.job[data-status=running] .badge { color: var(--accent); border-color: var(--accent); }
+
+.bar { margin-top: .7rem; height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); transition: width .4s ease; }
+.job[data-status=done] .bar i { background: var(--ok); }
+
+.job-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }
+.download {
+  padding: .4rem .8rem; border-radius: 8px; text-decoration: none;
+  background: #ff8a3d1a; color: var(--accent); border: 1px solid #ff8a3d40;
+  font-size: .88rem;
+}
+.download:hover { background: #ff8a3d2e; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

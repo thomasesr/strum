@@ -83,6 +83,7 @@ class BatchPipeline:
         include_vocals: bool = True,
         include_keys: bool = False,
         include_video: bool = False,
+        include_stems: bool = False,
         device: str = None,
         use_v11: bool = True,  # Use V11 with tom/cymbal correction
     ):
@@ -97,6 +98,7 @@ class BatchPipeline:
         self.include_vocals = include_vocals
         self.include_keys = include_keys
         self.include_video = include_video
+        self.include_stems = include_stems
         self.device = device
         self.use_v11 = use_v11
         
@@ -1560,6 +1562,66 @@ class BatchPipeline:
             logger.warning("ffmpeg failed, audio will be copied instead")
             shutil.copy(input_path, output_path.with_suffix(input_path.suffix))
     
+    # Clone Hero / YARG multi-track audio names. `song.ogg` is the backing
+    # track: whatever is left once every charted instrument has its own file,
+    # so it must NOT be the full mix or the song plays twice.
+    STEM_AUDIO_MAP = {
+        "drums": "drums.ogg",
+        "bass": "bass.ogg",
+        "guitar": "guitar.ogg",
+        "piano": "keys.ogg",
+        "vocals": "vocals.ogg",
+    }
+    # Stems that get folded together into song.ogg.
+    BACKING_STEMS = ("other", "backing_vocals")
+
+    def write_stem_audio(
+        self,
+        stems: Dict[str, Path],
+        song_folder: Path,
+        trim_start_ms: float = 0.0,
+    ) -> bool:
+        """Write separated stems as multi-track game audio.
+
+        Gives the game one .ogg per instrument, which is what enables mute-on-miss.
+        Every track is trimmed by the same `trim_start_ms` as the mixed audio would
+        be, so the stems stay in sync with the chart grid.
+
+        Returns False if the backing track could not be built, in which case the
+        caller should fall back to a single mixed song.ogg.
+        """
+        backing_sources = [stems[k] for k in self.BACKING_STEMS if k in stems]
+        if not backing_sources:
+            logger.warning("  ⚠ No backing stem available; using mixed song.ogg")
+            return False
+
+        for stem_name, out_name in self.STEM_AUDIO_MAP.items():
+            src = stems.get(stem_name)
+            if src is None or not Path(src).exists():
+                continue
+            self.convert_to_ogg(Path(src), song_folder / out_name, trim_start_ms)
+
+        # `other` plus any backing vocals become song.ogg. amix with normalize=0
+        # keeps the original levels; normalising here would quietly halve them.
+        song_ogg = song_folder / "song.ogg"
+        cmd = ["ffmpeg", "-y"]
+        for src in backing_sources:
+            if trim_start_ms and trim_start_ms >= 1.0:
+                cmd += ["-ss", f"{trim_start_ms / 1000.0:.3f}"]
+            cmd += ["-i", str(src)]
+        if len(backing_sources) > 1:
+            cmd += ["-filter_complex", f"amix=inputs={len(backing_sources)}:normalize=0"]
+        cmd += ["-vn", "-c:a", "libvorbis", "-q:a", "6", str(song_ogg)]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.warning(f"  ⚠ Backing track mix failed: {result.stderr[-300:]}")
+            return False
+
+        written = sorted(p.name for p in song_folder.glob("*.ogg"))
+        logger.info(f"  Multi-track audio: {written}")
+        return True
+
     def create_song_ini(
         self,
         song_folder: Path,
@@ -2127,7 +2189,11 @@ song_length = {duration_ms}
             # Convert audio (trim leading phase_offset_ms so audio downbeats
             # align with bar lines in the chart).
             song_ogg = song_folder / "song.ogg"
-            self.convert_to_ogg(audio_path, song_ogg, trim_start_ms=phase_offset_ms)
+            wrote_stems = False
+            if self.include_stems:
+                wrote_stems = self.write_stem_audio(stems, song_folder, phase_offset_ms)
+            if not wrote_stems:
+                self.convert_to_ogg(audio_path, song_ogg, trim_start_ms=phase_offset_ms)
             
             # Create song.ini
             self.create_song_ini(
@@ -2262,6 +2328,8 @@ def main():
     parser.add_argument("--no-keys", action="store_true", help="(deprecated; keys are off by default)")
     parser.add_argument("--keys", action="store_true",
                         help="Enable keys transcription (off by default; detector is unreliable)")
+    parser.add_argument("--stems", action="store_true",
+                        help="Ship separated stems as multi-track audio (enables mute-on-miss)")
     parser.add_argument("--include-video", action="store_true",
                         help="Download music videos from YouTube (requires yt-dlp)")
     parser.add_argument("--continue", dest="continue_from", action="store_true",
@@ -2278,6 +2346,7 @@ def main():
         include_vocals=not args.no_vocals,
         include_keys=args.keys and not args.no_keys,
         include_video=args.include_video,
+        include_stems=args.stems,
         device=args.device,
     )
     

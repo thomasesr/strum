@@ -1,0 +1,10 @@
+.git
+.github
+**/__pycache__
+*.pyc
+checkpoints/
+data/
+paper/
+assets/
+benchmark_results.json
+configs/*manifest*.json

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STRUM Auto-Charter</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>STRUM<span>Auto-Charter</span></h1>
+    <p class="sub">Audio or video in. Clone Hero and YARG packages out.</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div id="drop" class="drop" tabindex="0" role="button"
+           aria-label="Choose a file or drop one here">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 16V4m0 0L8 8m4-4 4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+        </svg>
+        <strong>Drop a file here</strong>
+        <span>or click to choose</span>
+        <small id="accepted"></small>
+      </div>
+      <input id="file" type="file" hidden>
+      <p id="picked" class="picked" hidden></p>
+    </section>
+
+    <section class="panel">
+      <h2>Instruments</h2>
+      <div class="grid">
+        <label><input type="checkbox" name="drums" checked> Drums</label>
+        <label><input type="checkbox" name="guitar" checked> Guitar</label>
+        <label><input type="checkbox" name="bass" checked> Bass</label>
+        <label><input type="checkbox" name="vocals" checked> Vocals</label>
+        <label><input type="checkbox" name="keys"> Keys</label>
+      </div>
+
+      <h2>Separation</h2>
+      <div class="grid">
+        <label title="Strip the lead vocal with a Mel-Band RoFormer before the stem pass">
+          <input type="checkbox" name="karaoke" checked> Karaoke pre-pass
+        </label>
+        <label title="Second pass that isolates backing vocals into their own stem">
+          <input type="checkbox" name="backing_split"> Split backing vocals
+        </label>
+        <label class="wide">
+          Stem model
+          <select name="separator">
+            <option value="demucs">Demucs htdemucs_6s</option>
+            <option value="bs_roformer_sw">BS-RoFormer SW</option>
+          </select>
+        </label>
+      </div>
+
+      <h2>Output</h2>
+      <div class="grid">
+        <label title="One .ogg per instrument, enabling mute-on-miss in game">
+          <input type="checkbox" name="stems" checked> Multi-track audio
+        </label>
+        <label><input type="checkbox" name="zip" checked> .zip (Clone Hero + YARG)</label>
+        <label><input type="checkbox" name="sng" checked> .sng (YARG)</label>
+      </div>
+
+      <button id="submit" class="primary" disabled>Chart it</button>
+      <p id="error" class="error" hidden></p>
+    </section>
+
+    <section class="panel">
+      <h2>Jobs</h2>
+      <ul id="jobs" class="jobs"></ul>
+      <p id="empty" class="muted">Nothing queued yet.</p>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

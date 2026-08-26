@@ -318,6 +318,7 @@ Developed on NVIDIA DGX Spark (GB10 GPU, CUDA 12.8). Trained on ~5,000 human-aut
 
 ## Documentation
 
+- [Web UI](docs/WEBGUI.md) — Browser front end, Docker deployment, HTTP API
 - [Separation](docs/SEPARATION.md) — Karaoke pre-separation and 6-stem backends
 - [Architecture](docs/ARCHITECTURE.md) — Technical specification
 - [Roadmap](docs/ROADMAP.md) — Development milestones
