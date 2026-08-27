@@ -40,6 +40,17 @@ Stage 1 `other` / `guitar` stems — the same failure mode, smaller. Turning on
 It costs one extra separation pass. Off by default so the default path matches
 the single-pass design; recommended on for anything you intend to ship.
 
+### Weights
+
+In Docker these arrive on their own: the app fetches the karaoke model and the
+Demucs models at startup onto the `strum-models` volume, and fetches BS-RoFormer
+SW plus an MSST checkout when that backend is selected. See
+[Web UI](WEBGUI.md#separation-weights).
+
+Outside Docker, Demucs and audio-separator download their own on first use. Set
+`STRUM_KARAOKE_MODEL_DIR` if you want the karaoke weights somewhere stable --
+audio-separator otherwise uses a temp directory.
+
 ### Backends
 
 | Backend | How | Use when |

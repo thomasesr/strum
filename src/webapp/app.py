@@ -37,7 +37,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.packaging.metadata import SongMeta
 from src.webapp.jobs import JobQueue, Options, Status
-from src.webapp.weights import weights
+from src.webapp.weights import separation, weights
 from src.webapp.media import (
     ALLOWED_EXTS,
     IMAGE_EXTS,
@@ -95,13 +95,23 @@ def _cleanup_staging() -> None:
 queue = JobQueue(DATA_DIR / "jobs", retain_hours=RETAIN_HOURS)
 
 
+async def _fetch_weights() -> None:
+    """Charting weights first, then separation warm-up.
+
+    Sequential on purpose: both are large, and racing them just makes each
+    slower on the sort of connection where this matters.
+    """
+    await weights.ensure()
+    await separation.ensure()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     queue.start()
     # Checked against the mounted volume, not baked into the image. Started as a
     # task rather than awaited so the UI is reachable while 1.8 GB arrives;
     # the job queue waits on it separately.
-    fetch = asyncio.create_task(weights.ensure())
+    fetch = asyncio.create_task(_fetch_weights())
     logger.info(f"STRUM web UI ready on {HOST}:{PORT}, data dir {DATA_DIR}")
     yield
     fetch.cancel()
@@ -124,13 +134,14 @@ async def get_config() -> dict:
         "max_upload_mb": MAX_UPLOAD_MB,
         "retain_hours": RETAIN_HOURS,
         "weights": weights.public(),
+        "separation": separation.public(),
     }
 
 
 @app.get("/api/weights")
 async def get_weights() -> dict:
     """Weight-download state, polled by the UI until it settles."""
-    return weights.public()
+    return {**weights.public(), "separation": separation.public()}
 
 
 @app.post("/api/uploads")

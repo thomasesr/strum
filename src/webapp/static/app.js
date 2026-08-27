@@ -29,12 +29,33 @@ fetch('/api/config').then((r) => r.json()).then((cfg) => {
 const weightsBox = $('#weights'), weightsText = $('#weights-text'), weightsBar = $('#weights-bar');
 let weightsPoll = null;
 
+const SEP_LABEL = {
+  karaoke: 'karaoke vocal remover',
+  roformer: 'BS-RoFormer stem model',
+  demucs: 'Demucs stem model',
+};
+
 function showWeights(w) {
-  if (!w || w.state === 'ready') {
+  if (!w) return;
+
+  // Charting weights come first and gate jobs. Separation models are only a
+  // warm-up, so they get a softer message and never block anything.
+  if (w.state === 'ready') {
+    const sep = w.separation || {};
+    if (sep.state === 'downloading') {
+      weightsBox.hidden = false;
+      weightsBox.dataset.state = 'downloading';
+      weightsBar.parentElement.hidden = true;
+      weightsText.textContent =
+        `Fetching the ${SEP_LABEL[sep.current] || sep.current || 'separation models'}. ` +
+        `Charting works now; the first job just waits on this.`;
+      return;
+    }
     weightsBox.hidden = true;
     if (weightsPoll) { clearInterval(weightsPoll); weightsPoll = null; }
     return;
   }
+
   weightsBox.hidden = false;
   weightsBox.dataset.state = w.state;
 

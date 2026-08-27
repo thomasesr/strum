@@ -91,6 +91,8 @@ ENV STRUM_WEB_HOST=0.0.0.0 \
     STRUM_CHECKPOINT_DIR=/app/checkpoints \
     STRUM_FETCH_CHECKPOINTS=1 \
     STRUM_MSST_DIR=/models/msst \
+    STRUM_SEPARATION_DIR=/models \
+    STRUM_KARAOKE_MODEL_DIR=/models/audio-separator \
     XDG_CACHE_HOME=/models/cache
 
 EXPOSE 8000

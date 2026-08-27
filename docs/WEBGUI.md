@@ -132,8 +132,30 @@ is *not* equivalent: the Hub nests files under `drums/`, `guitar/` and so on,
 while the loaders expect flat paths. `fetch_checkpoints.py` maps between the
 two, taking the mapping from `push_to_hf.py` so the two directions cannot drift.
 
-Separation weights are separate again -- Demucs and audio-separator download
-their own on first use, into `/models/cache` inside the container.
+### Separation weights
+
+These are a different set from a different source, and are fetched after the
+charting weights, one at a time:
+
+| Model | Size | When |
+|---|---|---|
+| Karaoke Mel-Band RoFormer | ~900 MB | Always, unless the karaoke pass is off |
+| Demucs (`htdemucs_6s`, `htdemucs_ft`) | ~300 MB | Always |
+| BS-RoFormer SW | ~700 MB | Only when `STRUM_SEPARATOR=bs_roformer_sw` |
+
+These are a warm-up, not a prerequisite: the pipeline would download them on
+first use anyway, so a failure here costs a slow first job rather than a broken
+one, and charting is never blocked waiting for them.
+
+Selecting BS-RoFormer SW also clones the
+[MSST](https://github.com/ZFTurbo/Music-Source-Separation-Training) inference
+repo, which that backend runs through, and points `STRUM_ROFORMER_CKPT` /
+`STRUM_ROFORMER_CFG` at the downloaded weights. Without the checkout the
+backend would fetch 700 MB and then quietly fall back to Demucs.
+
+Everything lands on the `strum-models` volume. This matters for the karaoke
+model in particular: `audio-separator` defaults to a temp directory, so left
+alone it re-downloaded ~900 MB on every container restart.
 
 ## Accepted input
 
