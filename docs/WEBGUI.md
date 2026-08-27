@@ -15,9 +15,37 @@ browser ──upload──► FastAPI ──► queue (one job at a time)
 ## Running it
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build
+docker/build.sh
 # then open http://127.0.0.1:8000
 ```
+
+The wrapper exists for one reason: the Dockerfile uses BuildKit cache mounts to
+keep the ~4 GB of wheels out of the image layers, and some Docker installs still
+default to the legacy builder, which fails with:
+
+```
+the --mount option requires BuildKit
+```
+
+`docker/build.sh` forces the right builder and passes any compose subcommand
+through (`docker/build.sh logs -f`, `docker/build.sh down`, and so on).
+
+To use plain compose instead, either export the variables per command:
+
+```bash
+DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
+  docker compose -f docker/docker-compose.yml up -d --build
+```
+
+or turn BuildKit on permanently in `/etc/docker/daemon.json`:
+
+```json
+{ "features": { "buildkit": true } }
+```
+
+followed by `sudo systemctl restart docker`. Docker Engine 23 and newer use
+BuildKit by default, so this only comes up on older installs or where it has
+been explicitly disabled.
 
 Without Docker:
 
@@ -48,7 +76,7 @@ the editable install picks them up from the same path.
 Prefer plain `build` and let the layer cache work:
 
 ```bash
-docker compose -f docker/docker-compose.yml build
+docker/build.sh build
 ```
 
 Reach for `--no-cache` only to force a genuinely clean dependency resolve --

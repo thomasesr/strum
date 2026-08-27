@@ -1,6 +1,10 @@
 # STRUM auto-charter.
 #
-#   docker compose -f docker/docker-compose.yml up --build
+#   docker/build.sh
+#
+# Use that wrapper rather than calling compose directly: the Dockerfile relies
+# on BuildKit cache mounts, and installs that default to the legacy builder fail
+# with "the --mount option requires BuildKit". The wrapper forces the right one.
 #
 # Bind address and port come from the environment, so a .env file next to this
 # one (or plain shell exports) is all it takes to move the service:
