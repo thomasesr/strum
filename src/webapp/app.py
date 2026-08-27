@@ -37,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.packaging.metadata import SongMeta
 from src.webapp.jobs import JobQueue, Options, Status
+from src.webapp.weights import weights
 from src.webapp.media import (
     ALLOWED_EXTS,
     IMAGE_EXTS,
@@ -97,8 +98,13 @@ queue = JobQueue(DATA_DIR / "jobs", retain_hours=RETAIN_HOURS)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     queue.start()
+    # Checked against the mounted volume, not baked into the image. Started as a
+    # task rather than awaited so the UI is reachable while 1.8 GB arrives;
+    # the job queue waits on it separately.
+    fetch = asyncio.create_task(weights.ensure())
     logger.info(f"STRUM web UI ready on {HOST}:{PORT}, data dir {DATA_DIR}")
     yield
+    fetch.cancel()
     await queue.stop()
 
 
@@ -117,7 +123,14 @@ async def get_config() -> dict:
         "allowed_extensions": sorted(ALLOWED_EXTS),
         "max_upload_mb": MAX_UPLOAD_MB,
         "retain_hours": RETAIN_HOURS,
+        "weights": weights.public(),
     }
+
+
+@app.get("/api/weights")
+async def get_weights() -> dict:
+    """Weight-download state, polled by the UI until it settles."""
+    return weights.public()
 
 
 @app.post("/api/uploads")

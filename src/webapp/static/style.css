@@ -147,3 +147,15 @@ button { font: inherit; cursor: pointer; border-radius: 8px; }
   .meta { flex-direction: column; align-items: stretch; }
   .art { width: auto; justify-items: start; }
 }
+
+/* model-weights banner */
+.banner {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: .8rem 1rem;
+  background: var(--panel);
+  font-size: .9rem;
+}
+.banner[data-state="failed"] { border-left-color: var(--bad); color: var(--bad); }
+.banner .bar { margin-top: .6rem; }

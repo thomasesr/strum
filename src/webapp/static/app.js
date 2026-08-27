@@ -18,7 +18,48 @@ fetch('/api/config').then((r) => r.json()).then((cfg) => {
   $('#accepted').textContent =
     cfg.allowed_extensions.map((e) => e.replace('.', '')).join(', ') +
     ` · up to ${cfg.max_upload_mb} MB`;
+  showWeights(cfg.weights);
 });
+
+// --- model weights -------------------------------------------------------
+// Weights are not in the image; they land on a volume on first run. The server
+// serves the UI while that happens, so the state is worth surfacing: a job
+// queued now waits for the download rather than failing.
+
+const weightsBox = $('#weights'), weightsText = $('#weights-text'), weightsBar = $('#weights-bar');
+let weightsPoll = null;
+
+function showWeights(w) {
+  if (!w || w.state === 'ready') {
+    weightsBox.hidden = true;
+    if (weightsPoll) { clearInterval(weightsPoll); weightsPoll = null; }
+    return;
+  }
+  weightsBox.hidden = false;
+  weightsBox.dataset.state = w.state;
+
+  if (w.state === 'downloading') {
+    const pct = w.total ? Math.round((w.done / w.total) * 100) : 0;
+    weightsText.textContent =
+      `Downloading charting models — ${w.done} of ${w.total} files. ` +
+      `You can queue songs now; they start once this finishes.`;
+    weightsBar.style.width = `${pct}%`;
+    weightsBar.parentElement.hidden = false;
+  } else {
+    weightsBar.parentElement.hidden = true;
+    weightsText.textContent = w.state === 'failed'
+      ? `Model weights unavailable: ${w.error}`
+      : w.error || 'Checking model weights…';
+  }
+
+  if (!weightsPoll && w.state !== 'failed') {
+    weightsPoll = setInterval(async () => {
+      try {
+        showWeights(await (await fetch('/api/weights')).json());
+      } catch { /* transient; the next tick retries */ }
+    }, 3000);
+  }
+}
 
 // --- file choosing -------------------------------------------------------
 

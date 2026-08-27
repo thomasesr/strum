@@ -28,6 +28,7 @@ from pathlib import Path
 from src.packaging.metadata import SongMeta, apply_metadata
 from src.packaging.package import package_song, safe_name
 from src.webapp.media import MediaError, extract_audio, inspect
+from src.webapp.weights import weights
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,16 @@ class JobQueue:
         in_dir, out_dir, pkg_dir = work / "input", work / "output", work / "packages"
 
         self._set(job, status=Status.RUNNING, stage="Preparing", progress=0.02)
+
+        # On a fresh volume the weights are still arriving. Wait rather than
+        # start a run that would fail on a missing checkpoint.
+        if not weights.ready:
+            self._set(job, stage="Waiting for model weights", progress=0.02)
+        if not await weights.wait_ready():
+            self._set(job, status=Status.FAILED, stage="Failed",
+                      error=weights.error or "Model weights are unavailable",
+                      duration_s=time.time() - started, finished_at=time.time())
+            return
 
         # Video uploads get demuxed here; the pipeline only ever sees audio.
         source = next(in_dir.glob("source.*"))

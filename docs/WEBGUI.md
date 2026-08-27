@@ -100,26 +100,31 @@ nvidia-container-toolkit -- and the image is several GB smaller.
 
 ## Model weights
 
-**In Docker there is nothing to do.** The checkpoints live on a writable volume
-(`strum-checkpoints`), and the entrypoint fills it on first boot: it runs
-`fetch_checkpoints.py`, which skips anything already present. So the first
-`up` pulls 1.8 GB from
-[`opria123/strum`](https://huggingface.co/opria123/strum) before the server
-binds, and later boots cost one directory listing.
+**Nothing is downloaded at build time.** The image carries no weights at all.
+They live on a writable volume (`strum-checkpoints`), and the app checks that
+volume on startup: anything missing is downloaded from
+[`opria123/strum`](https://huggingface.co/opria123/strum), anything already
+there is left alone. So the first run fetches 1.8 GB and later runs cost one
+directory listing.
 
-Because of that first download, the healthcheck has a 20-minute start period.
-`docker compose logs -f` shows the progress. If the download fails the server
-still starts, so you can see the error in the UI rather than staring at a
-container that never comes up; jobs will fail until a `docker compose restart`
-completes the fetch.
+The download does not block startup. The server binds immediately, the UI shows
+a progress banner, and jobs queued during the download **wait** for it rather
+than failing against weights that have not arrived. `docker compose logs -f`
+shows the same progress.
 
-Set `STRUM_FETCH_CHECKPOINTS=0` to skip it, if you would rather populate the
-volume yourself.
+If the download fails the server keeps running, the banner says why, and jobs
+fail with that reason instead of an obscure missing-checkpoint error. Restart to
+retry; already-downloaded files are kept.
 
-Outside Docker, fetch them by hand before the first run:
+Set `STRUM_FETCH_CHECKPOINTS=0` to skip the check, if you populate the volume
+yourself.
+
+This runs inside the app rather than in a container entrypoint so that it also
+works when `strum-web` is run directly. To fetch them by hand:
 
 ```bash
-python scripts/fetch_checkpoints.py
+python scripts/fetch_checkpoints.py           # only what is missing
+python scripts/fetch_checkpoints.py --list    # show the plan, download nothing
 ```
 
 Note that `huggingface-cli download opria123/strum --local-dir checkpoints/`
@@ -127,7 +132,7 @@ is *not* equivalent: the Hub nests files under `drums/`, `guitar/` and so on,
 while the loaders expect flat paths. `fetch_checkpoints.py` maps between the
 two, taking the mapping from `push_to_hf.py` so the two directions cannot drift.
 
-Separation weights are not included here — Demucs and audio-separator download
+Separation weights are separate again -- Demucs and audio-separator download
 their own on first use, into `/models/cache` inside the container.
 
 ## Accepted input
@@ -242,7 +247,8 @@ Finished jobs are cleaned up after `STRUM_WEB_RETAIN_HOURS`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/config` | Accepted extensions, upload cap, retention. |
+| `GET` | `/api/config` | Accepted extensions, upload cap, retention, weight state. |
+| `GET` | `/api/weights` | Weight-download progress. Polled by the UI until ready. |
 | `POST` | `/api/uploads` | Multipart upload. Stages the file, returns an id plus its tags. |
 | `GET` | `/api/uploads/{id}/cover` | Staged album art as PNG. |
 | `POST` | `/api/uploads/{id}/cover` | Replace the staged album art. |
