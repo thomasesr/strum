@@ -72,15 +72,27 @@ nvidia-container-toolkit -- and the image is several GB smaller.
 
 ## Model weights
 
-The charting models are not in the repo. Fetch them before the first run:
+**In Docker there is nothing to do.** The checkpoints live on a writable volume
+(`strum-checkpoints`), and the entrypoint fills it on first boot: it runs
+`fetch_checkpoints.py`, which skips anything already present. So the first
+`up` pulls 1.8 GB from
+[`opria123/strum`](https://huggingface.co/opria123/strum) before the server
+binds, and later boots cost one directory listing.
+
+Because of that first download, the healthcheck has a 20-minute start period.
+`docker compose logs -f` shows the progress. If the download fails the server
+still starts, so you can see the error in the UI rather than staring at a
+container that never comes up; jobs will fail until a `docker compose restart`
+completes the fetch.
+
+Set `STRUM_FETCH_CHECKPOINTS=0` to skip it, if you would rather populate the
+volume yourself.
+
+Outside Docker, fetch them by hand before the first run:
 
 ```bash
 python scripts/fetch_checkpoints.py
 ```
-
-That pulls 1.8 GB from [`opria123/strum`](https://huggingface.co/opria123/strum)
-into `checkpoints/`, which compose bind-mounts read-only into the container.
-Without them every job fails during transcription.
 
 Note that `huggingface-cli download opria123/strum --local-dir checkpoints/`
 is *not* equivalent: the Hub nests files under `drums/`, `guitar/` and so on,
@@ -113,6 +125,25 @@ media at all, is rejected before it can reach the queue. Uploads shorter than
 | Stem model | `Demucs htdemucs_6s` or `BS-RoFormer SW`. |
 | Multi-track audio | One `.ogg` per instrument, which is what enables mute-on-miss in game. Off means a single mixed `song.ogg`. |
 | `.zip` / `.sng` | `.zip` extracts to a folder both games read. `.sng` is YARG's single-file container. |
+
+## Song details
+
+Artist and title are what the game shows in its song list, and the pipeline can
+only guess them from the filename. So the upload is a two-step flow: the file is
+sent once, the server reads its tags, and the browser shows them for editing
+before anything is queued.
+
+Prefilled from the file's own metadata (ID3v2, Vorbis comments, MP4 atoms --
+whatever ffprobe can read), falling back to splitting the filename on `" - "`.
+`year` is normalised to four digits, so a `date` of `2004-11-16` becomes `2004`.
+
+Album art follows the same idea. Embedded cover art is extracted and shown; if
+there is none, or you want different art, upload a PNG/JPEG/WebP. Either way it
+is converted to a 512x512 PNG -- fitted, not stretched, padded to square.
+
+Title and artist are required, since they name the song folder and therefore
+the package file. Everything else is optional, and blank fields never erase
+what the pipeline worked out on its own.
 
 ## Output
 
@@ -184,7 +215,10 @@ Finished jobs are cleaned up after `STRUM_WEB_RETAIN_HOURS`.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/config` | Accepted extensions, upload cap, retention. |
-| `POST` | `/api/jobs` | Multipart upload plus options. Returns the job. |
+| `POST` | `/api/uploads` | Multipart upload. Stages the file, returns an id plus its tags. |
+| `GET` | `/api/uploads/{id}/cover` | Staged album art as PNG. |
+| `POST` | `/api/uploads/{id}/cover` | Replace the staged album art. |
+| `POST` | `/api/jobs` | Queue a staged upload: `upload_id`, metadata, options. |
 | `GET` | `/api/jobs` | All known jobs, newest first. |
 | `GET` | `/api/jobs/{id}?log=N` | One job, with the last N log lines. |
 | `POST` | `/api/jobs/{id}/cancel` | Kill or dequeue a job. |

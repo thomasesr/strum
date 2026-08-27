@@ -25,6 +25,9 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shutil
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -32,8 +35,17 @@ from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.packaging.metadata import SongMeta
 from src.webapp.jobs import JobQueue, Options, Status
-from src.webapp.media import ALLOWED_EXTS
+from src.webapp.media import (
+    ALLOWED_EXTS,
+    IMAGE_EXTS,
+    MAX_COVER_MB,
+    MediaError,
+    extract_cover,
+    inspect,
+    normalize_cover,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +58,38 @@ MAX_UPLOAD_MB = int(os.environ.get("STRUM_WEB_MAX_UPLOAD_MB", "300"))
 RETAIN_HOURS = float(os.environ.get("STRUM_WEB_RETAIN_HOURS", "24"))
 
 UPLOAD_CHUNK = 1024 * 1024
+# Staged uploads the user never submitted are swept after this long.
+UPLOAD_TTL_S = 4 * 3600
+
+_ID_RE = re.compile(r"[0-9a-f]{16,32}\Z")
+
+
+def _staging(upload_id: str) -> Path:
+    return DATA_DIR / "staging" / upload_id
+
+
+def _checked_id(upload_id: str) -> str:
+    """Reject anything that is not one of our own ids.
+
+    Upload ids reach the filesystem as a path component, so this is what stops
+    a crafted id from escaping the staging directory.
+    """
+    if not _ID_RE.match(upload_id):
+        raise HTTPException(400, "Malformed upload id")
+    return upload_id
+
+
+def _cleanup_staging() -> None:
+    root = DATA_DIR / "staging"
+    if not root.is_dir():
+        return
+    cutoff = time.time() - UPLOAD_TTL_S
+    for entry in root.iterdir():
+        try:
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            pass
 
 queue = JobQueue(DATA_DIR / "jobs", retain_hours=RETAIN_HOURS)
 
@@ -76,9 +120,119 @@ async def get_config() -> dict:
     }
 
 
+@app.post("/api/uploads")
+async def create_upload(file: UploadFile) -> dict:
+    """Stage a file and report what we can read out of it.
+
+    Charting is split into upload-then-submit so the browser can show the
+    embedded tags and cover for editing first. The file is stored once and
+    referenced by id; it is never sent twice.
+    """
+    filename = Path(file.filename or "upload").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in ALLOWED_EXTS:
+        allowed = ", ".join(sorted(e.lstrip(".") for e in ALLOWED_EXTS))
+        raise HTTPException(400, f"Unsupported file type. Accepted: {allowed}")
+
+    _cleanup_staging()
+    upload_id = os.urandom(12).hex()
+    staging = _staging(upload_id)
+    staging.mkdir(parents=True, exist_ok=True)
+    source = staging / f"source{suffix}"
+
+    limit = MAX_UPLOAD_MB * 1024 * 1024
+    written = 0
+    try:
+        with open(source, "wb") as fh:
+            while chunk := await file.read(UPLOAD_CHUNK):
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(413, f"File exceeds {MAX_UPLOAD_MB} MB")
+                fh.write(chunk)
+        if written == 0:
+            raise HTTPException(400, "Empty upload")
+        info = await asyncio.to_thread(inspect, source)
+    except HTTPException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    except MediaError as e:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise HTTPException(400, str(e)) from e
+
+    # Pull the embedded cover now so the browser has something to preview.
+    if info.get("has_cover"):
+        await asyncio.to_thread(extract_cover, source, staging / "cover.png")
+
+    metadata = dict(info["metadata"])
+    if not metadata.get("title"):
+        # Fall back to the filename, which is what the pipeline would guess.
+        stem = Path(filename).stem
+        artist, _, title = stem.partition(" - ")
+        metadata["title"] = (title or stem).strip()
+        if not metadata.get("artist") and title:
+            metadata["artist"] = artist.strip()
+
+    (staging / "upload.json").write_text(
+        json.dumps({"filename": filename}), encoding="utf-8"
+    )
+    return {
+        "upload_id": upload_id,
+        "filename": filename,
+        "duration_s": round(info["duration_s"], 1),
+        "has_video": info["has_video"],
+        "metadata": metadata,
+        "has_cover": (staging / "cover.png").exists(),
+    }
+
+
+@app.get("/api/uploads/{upload_id}/cover")
+async def get_cover(upload_id: str):
+    """Serve the staged album art, embedded or uploaded."""
+    cover = _staging(_checked_id(upload_id)) / "cover.png"
+    if not cover.exists():
+        raise HTTPException(404, "No album art for this upload")
+    return FileResponse(cover, media_type="image/png")
+
+
+@app.post("/api/uploads/{upload_id}/cover")
+async def set_cover(upload_id: str, file: UploadFile) -> dict:
+    """Replace the staged album art with an uploaded image."""
+    staging = _staging(_checked_id(upload_id))
+    if not staging.is_dir():
+        raise HTTPException(404, "Upload expired or unknown")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in IMAGE_EXTS:
+        allowed = ", ".join(sorted(e.lstrip(".") for e in IMAGE_EXTS))
+        raise HTTPException(400, f"Album art must be one of: {allowed}")
+
+    limit = MAX_COVER_MB * 1024 * 1024
+    raw = staging / f"cover_upload{suffix}"
+    written = 0
+    try:
+        with open(raw, "wb") as fh:
+            while chunk := await file.read(UPLOAD_CHUNK):
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(413, f"Album art exceeds {MAX_COVER_MB} MB")
+                fh.write(chunk)
+        await asyncio.to_thread(normalize_cover, raw, staging / "cover.png")
+    except MediaError as e:
+        raise HTTPException(400, str(e)) from e
+    finally:
+        raw.unlink(missing_ok=True)
+    return {"has_cover": True}
+
+
 @app.post("/api/jobs")
 async def create_job(
-    file: UploadFile,
+    upload_id: str = Form(...),
+    title: str = Form(""),
+    artist: str = Form(""),
+    album: str = Form(""),
+    year: str = Form(""),
+    genre: str = Form(""),
+    charter: str = Form(""),
     drums: str = Form("true"),
     guitar: str = Form("true"),
     bass: str = Form("true"),
@@ -90,12 +244,11 @@ async def create_job(
     separator: str = Form("demucs"),
     formats: str = Form("zip,sng"),
 ) -> dict:
-    """Accept an upload and queue it for charting."""
-    filename = Path(file.filename or "upload").name
-    suffix = Path(filename).suffix.lower()
-    if suffix not in ALLOWED_EXTS:
-        allowed = ", ".join(sorted(e.lstrip(".") for e in ALLOWED_EXTS))
-        raise HTTPException(400, f"Unsupported file type. Accepted: {allowed}")
+    """Queue a staged upload for charting."""
+    staging = _staging(_checked_id(upload_id))
+    sources = [p for p in staging.glob("source.*")] if staging.is_dir() else []
+    if not sources:
+        raise HTTPException(404, "Upload expired or unknown; upload the file again")
 
     if separator not in ("demucs", "bs_roformer_sw"):
         raise HTTPException(400, "Unknown separator")
@@ -110,34 +263,21 @@ async def create_job(
         karaoke=_bool(karaoke, True), backing_split=_bool(backing_split),
         separator=separator, formats=wanted,
     )
-
-    # Stage the upload before creating the job so a half-written file never
-    # reaches the queue. The name is ours, not the client's, so a crafted
-    # filename cannot escape the job directory.
-    staging = DATA_DIR / "staging"
-    staging.mkdir(parents=True, exist_ok=True)
-    tmp = staging / f"{os.urandom(8).hex()}{suffix}"
-    limit = MAX_UPLOAD_MB * 1024 * 1024
-    written = 0
-    try:
-        with open(tmp, "wb") as fh:
-            while chunk := await file.read(UPLOAD_CHUNK):
-                written += len(chunk)
-                if written > limit:
-                    raise HTTPException(413, f"File exceeds {MAX_UPLOAD_MB} MB")
-                fh.write(chunk)
-    except HTTPException:
-        tmp.unlink(missing_ok=True)
-        raise
-    if written == 0:
-        tmp.unlink(missing_ok=True)
-        raise HTTPException(400, "Empty upload")
+    meta = SongMeta(title=title, artist=artist, album=album,
+                    year=year, genre=genre, charter=charter)
 
     try:
-        job = await queue.submit(filename, tmp, options)
+        original = json.loads((staging / "upload.json").read_text())["filename"]
+    except (OSError, ValueError, KeyError):
+        original = sources[0].name
+
+    cover = staging / "cover.png"
+    try:
+        job = await queue.submit(
+            original, sources[0], options, meta, cover if cover.exists() else None
+        )
     finally:
-        # submit() moves the file on success; this only fires on rejection.
-        tmp.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
 
     return job.public()
 

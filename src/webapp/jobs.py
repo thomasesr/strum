@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from src.packaging.metadata import SongMeta, apply_metadata
 from src.packaging.package import package_song, safe_name
 from src.webapp.media import MediaError, extract_audio, inspect
 
@@ -103,6 +104,7 @@ class Job:
     id: str
     filename: str
     options: Options
+    meta: SongMeta = field(default_factory=SongMeta)
     status: Status = Status.QUEUED
     stage: str = "Queued"
     progress: float = 0.0
@@ -118,6 +120,8 @@ class Job:
         return {
             "id": self.id,
             "filename": self.filename,
+            "title": self.meta.title,
+            "artist": self.meta.artist,
             "status": self.status.value,
             "stage": self.stage,
             "progress": round(self.progress, 3),
@@ -186,14 +190,22 @@ class JobQueue:
 
     # -- submission --------------------------------------------------------
 
-    async def submit(self, filename: str, source: Path, options: Options) -> Job:
+    async def submit(
+        self,
+        filename: str,
+        source: Path,
+        options: Options,
+        meta: SongMeta | None = None,
+        cover: Path | None = None,
+    ) -> Job:
         """Take ownership of a staged upload and queue it.
 
         The file is moved into the job directory *before* the id is queued: the
         worker may pick it up on the next tick, so it has to already be there.
         """
         job_id = uuid.uuid4().hex[:12]
-        job = Job(id=job_id, filename=filename, options=options)
+        job = Job(id=job_id, filename=filename, options=options,
+                  meta=meta or SongMeta())
         source = Path(source)
 
         # Validate up front so a bad upload fails immediately instead of after
@@ -210,6 +222,10 @@ class JobQueue:
         in_dir = self.job_dir(job_id) / "input"
         in_dir.mkdir(parents=True, exist_ok=True)
         source.replace(in_dir / f"source{source.suffix.lower()}")
+        if cover is not None and Path(cover).exists():
+            # Kept beside the input rather than in the song folder, which does
+            # not exist until the pipeline has run.
+            Path(cover).replace(self.job_dir(job_id) / "cover.png")
 
         self.jobs[job_id] = job
         await self._queue.put(job_id)
@@ -304,6 +320,15 @@ class JobQueue:
             return
 
         song = song_folders[0]
+
+        # Corrections are applied after charting: the pipeline guesses artist
+        # and title from the filename, and that guess drives the folder name,
+        # song.ini and therefore the package filename.
+        cover = work / "cover.png"
+        song = await asyncio.to_thread(
+            apply_metadata, song, job.meta, cover if cover.exists() else None
+        )
+
         packages = await asyncio.to_thread(
             package_song, song, pkg_dir, job.options.formats, safe_name(song.name)
         )

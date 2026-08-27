@@ -34,10 +34,12 @@ services:
       STRUM_SEPARATOR: "${STRUM_SEPARATOR:-demucs}"
       STRUM_DRUMS_DEMUCS: "${STRUM_DRUMS_DEMUCS:-htdemucs_ft}"
       STRUM_MSST_DIR: "/models/msst"
+      # Set to 0 if you populate the checkpoint volume yourself.
+      STRUM_FETCH_CHECKPOINTS: "${STRUM_FETCH_CHECKPOINTS:-1}"
 
     volumes:
       - strum-data:/data                  # uploads, job output, packages
-      - ../checkpoints:/app/checkpoints:ro   # STRUM model weights
+      - strum-checkpoints:/app/checkpoints   # charting weights, filled on first boot
       - strum-models:/models              # separation weights + torch/demucs cache
 
     deploy:
@@ -53,4 +55,5 @@ services:
 
 volumes:
   strum-data:
+  strum-checkpoints:
   strum-models:

@@ -76,9 +76,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY src ./src
 COPY scripts ./scripts
 COPY configs ./configs
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Weights and job data are mounted, not baked: the checkpoints are large and
-# licensed separately, and job output should outlive the container.
+# licensed separately, and job output should outlive the container. The
+# checkpoint volume is writable so the entrypoint can populate it on first boot.
 VOLUME ["/data", "/app/checkpoints", "/models"]
 
 ENV STRUM_WEB_HOST=0.0.0.0 \
@@ -86,14 +88,20 @@ ENV STRUM_WEB_HOST=0.0.0.0 \
     STRUM_WEB_DATA_DIR=/data \
     STRUM_WEB_MAX_UPLOAD_MB=300 \
     STRUM_WEB_RETAIN_HOURS=24 \
+    STRUM_CHECKPOINT_DIR=/app/checkpoints \
+    STRUM_FETCH_CHECKPOINTS=1 \
     STRUM_MSST_DIR=/models/msst \
     XDG_CACHE_HOME=/models/cache
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+# start-period is generous because a fresh checkpoint volume makes the first
+# boot download 1.8 GB before the server binds. Later boots start in seconds.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20m --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${STRUM_WEB_PORT}/api/config" || exit 1
 
 # Runs as root by default so mounted volumes stay writable regardless of host
 # ownership; override with `user:` in compose if you would rather not.
+# The entrypoint fills the checkpoint volume when it is empty, then execs this.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["strum-web"]

@@ -21,13 +21,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from push_to_hf import PLAN, REPO_ID  # noqa: E402
+from push_to_hf import PLAN, REPO_ID, ROOT  # noqa: E402
+
+# PLAN's local paths are absolute under the source tree. --dest rebases them so
+# the container can write to a mounted volume that is not ROOT/checkpoints.
+DEFAULT_DEST = Path(os.environ.get("STRUM_CHECKPOINT_DIR") or (ROOT / "checkpoints"))
+PLAN_ROOT = ROOT / "checkpoints"
 
 # Benchmark and paper artifacts are not needed to chart a song.
 ARTIFACT_GROUPS = {
@@ -40,6 +46,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo-id", default=REPO_ID)
+    ap.add_argument("--dest", type=Path, default=DEFAULT_DEST,
+                    help=f"where to place checkpoints (default: {DEFAULT_DEST})")
     ap.add_argument("--revision", default=None, help="Hub revision (branch, tag or commit)")
     ap.add_argument("--force", action="store_true", help="re-download files that already exist")
     ap.add_argument("--only", action="append", default=[], metavar="GROUP",
@@ -49,7 +57,13 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="print the plan and exit")
     args = ap.parse_args()
 
-    plan = list(PLAN)
+    # Rebase every destination onto --dest. Entries outside checkpoints/ (the
+    # paper artifacts) keep their original location.
+    plan = [
+        (group, remote,
+         args.dest / local.relative_to(PLAN_ROOT) if local.is_relative_to(PLAN_ROOT) else local)
+        for group, remote, local in PLAN
+    ]
     if not args.artifacts:
         plan = [e for e in plan if e[0] not in ARTIFACT_GROUPS]
     if args.only:

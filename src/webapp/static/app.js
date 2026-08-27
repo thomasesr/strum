@@ -3,8 +3,13 @@
 const $ = (sel) => document.querySelector(sel);
 const drop = $('#drop'), fileInput = $('#file'), picked = $('#picked');
 const submit = $('#submit'), errorBox = $('#error'), jobList = $('#jobs');
+const metaPanel = $('#meta-panel'), art = $('#art'), artEmpty = $('#art-empty');
+const artPick = $('#art-pick'), artFile = $('#art-file');
+const META_FIELDS = ['title', 'artist', 'album', 'year', 'genre', 'charter'];
 
-let chosen = null;
+// Set once the staged upload exists server-side. The file itself is uploaded
+// exactly once; submitting only sends the id plus the edited metadata.
+let uploadId = null;
 let config = { allowed_extensions: [], max_upload_mb: 300 };
 const jobs = new Map();
 
@@ -17,7 +22,7 @@ fetch('/api/config').then((r) => r.json()).then((cfg) => {
 
 // --- file choosing -------------------------------------------------------
 
-function choose(file) {
+async function choose(file) {
   if (!file) return;
   const ext = '.' + file.name.split('.').pop().toLowerCase();
   if (config.allowed_extensions.length && !config.allowed_extensions.includes(ext)) {
@@ -26,11 +31,49 @@ function choose(file) {
   if (file.size > config.max_upload_mb * 1024 * 1024) {
     return fail(`That file is ${(file.size / 1048576).toFixed(0)} MB, over the ${config.max_upload_mb} MB limit.`);
   }
-  chosen = file;
-  picked.textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB`;
+
+  reset();
+  picked.textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · reading tags…`;
   picked.hidden = false;
-  submit.disabled = false;
   errorBox.hidden = true;
+
+  const body = new FormData();
+  body.append('file', file);
+  try {
+    const res = await fetch('/api/uploads', { method: 'POST', body });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Upload failed');
+
+    uploadId = data.upload_id;
+    for (const name of META_FIELDS) {
+      $(`[name="${name}"]`).value = data.metadata[name] || '';
+    }
+    // Cache-bust: the art for a new upload lives at a different id, but a
+    // replaced cover reuses the same URL.
+    setArt(data.has_cover ? `/api/uploads/${uploadId}/cover?t=${Date.now()}` : null);
+    metaPanel.hidden = false;
+    const mins = Math.floor(data.duration_s / 60), secs = Math.round(data.duration_s % 60);
+    picked.textContent =
+      `${data.filename} · ${mins}:${String(secs).padStart(2, '0')}` +
+      (data.has_video ? ' · audio will be extracted from video' : '');
+    submit.disabled = false;
+  } catch (e) {
+    picked.hidden = true;
+    fail(e.message);
+  }
+}
+
+function setArt(url) {
+  art.hidden = !url;
+  artEmpty.hidden = !!url;
+  if (url) art.src = url;
+}
+
+function reset() {
+  uploadId = null;
+  submit.disabled = true;
+  metaPanel.hidden = true;
+  setArt(null);
 }
 
 function fail(message) {
@@ -52,9 +95,16 @@ drop.addEventListener('drop', (e) => choose(e.dataTransfer.files[0]));
 // --- submitting ----------------------------------------------------------
 
 submit.addEventListener('click', async () => {
-  if (!chosen) return;
+  if (!uploadId) return;
+  const title = $('[name="title"]').value.trim();
+  const artist = $('[name="artist"]').value.trim();
+  if (!title || !artist) return fail('Title and artist are required.');
+  const year = $('[name="year"]').value.trim();
+  if (year && !/^\d{4}$/.test(year)) return fail('Year should be four digits, or blank.');
+
   const body = new FormData();
-  body.append('file', chosen);
+  body.append('upload_id', uploadId);
+  for (const name of META_FIELDS) body.append(name, $(`[name="${name}"]`).value.trim());
   for (const name of ['drums', 'guitar', 'bass', 'vocals', 'keys', 'stems',
                       'karaoke', 'backing_split']) {
     body.append(name, String($(`[name="${name}"]`).checked));
@@ -65,21 +115,41 @@ submit.addEventListener('click', async () => {
   body.append('formats', formats.join(','));
 
   submit.disabled = true;
-  submit.textContent = 'Uploading…';
+  submit.textContent = 'Queueing…';
   try {
     const res = await fetch('/api/jobs', { method: 'POST', body });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Upload failed');
+    if (!res.ok) throw new Error(data.detail || 'Could not queue the job');
     render(data);
-    chosen = null;
+    // The upload is consumed server-side, so the form goes back to empty.
+    reset();
     fileInput.value = '';
     picked.hidden = true;
     errorBox.hidden = true;
   } catch (e) {
     fail(e.message);
+    submit.disabled = false;
   } finally {
     submit.textContent = 'Chart it';
-    submit.disabled = chosen === null;
+  }
+});
+
+artPick.addEventListener('click', () => artFile.click());
+artFile.addEventListener('change', async () => {
+  const file = artFile.files[0];
+  if (!file || !uploadId) return;
+  const body = new FormData();
+  body.append('file', file);
+  try {
+    const res = await fetch(`/api/uploads/${uploadId}/cover`, { method: 'POST', body });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not read that image');
+    setArt(`/api/uploads/${uploadId}/cover?t=${Date.now()}`);
+    errorBox.hidden = true;
+  } catch (e) {
+    fail(e.message);
+  } finally {
+    artFile.value = '';
   }
 });
 
@@ -112,7 +182,10 @@ function render(job) {
   head.className = 'job-head';
   const name = document.createElement('span');
   name.className = 'job-name';
-  name.textContent = job.filename;            // textContent: never trust a filename as HTML
+  // textContent throughout: filenames and tag values are user-supplied.
+  name.textContent = (job.artist && job.title)
+    ? `${job.artist} - ${job.title}`
+    : job.filename;
   const state = document.createElement('span');
   state.className = 'badge';
   state.textContent = STATUS_TEXT[job.status] || job.status;

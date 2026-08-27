@@ -27,6 +27,31 @@
       <p id="picked" class="picked" hidden></p>
     </section>
 
+    <section class="panel" id="meta-panel" hidden>
+      <h2>Song details</h2>
+      <p class="muted small">Read from the file's tags where possible. These are
+        what the game shows in its song list, so correct anything wrong.</p>
+      <div class="meta">
+        <div class="art">
+          <img id="art" alt="Album art" hidden>
+          <div id="art-empty" class="art-empty">No art</div>
+          <button id="art-pick" class="ghost small">Choose art</button>
+          <input id="art-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+        </div>
+        <div class="fields">
+          <label>Title<input name="title" autocomplete="off" required></label>
+          <label>Artist<input name="artist" autocomplete="off" required></label>
+          <label>Album<input name="album" autocomplete="off"></label>
+          <div class="row">
+            <label>Year<input name="year" inputmode="numeric" maxlength="4"
+                   pattern="[0-9]{4}" autocomplete="off"></label>
+            <label>Genre<input name="genre" autocomplete="off"></label>
+          </div>
+          <label>Charter<input name="charter" autocomplete="off" placeholder="STRUM"></label>
+        </div>
+      </div>
+    </section>
+
     <section class="panel">
       <h2>Instruments</h2>
       <div class="grid">
