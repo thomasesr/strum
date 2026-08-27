@@ -24,6 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# The image ships pip 24.0, which skips wheels whose metadata it cannot parse
+# and backtracks instead. On scikit-learn that lands on a pre-wheel release that
+# builds via the removed numpy.distutils. Upgrading first keeps the resolver on
+# the same versions the dependency set was verified against.
+RUN pip install --upgrade pip setuptools wheel
+
 # Torch first, from the CUDA index, so the dependency resolver below cannot
 # quietly pull the CPU-only build. TensorFlow arrives later as a basic-pitch
 # dependency but keeps its own CUDA libraries behind an `and-cuda` extra we
@@ -39,7 +45,14 @@ COPY src ./src
 COPY scripts ./scripts
 COPY configs ./configs
 
-RUN pip install -e '.[full,web]'
+# diffq is a hard audio-separator dependency on Linux and publishes no cp311
+# wheel at any version, so it always compiles from source. The toolchain is
+# installed and removed inside one layer so it never reaches the final image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && pip install -e '.[full,web]' \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Weights and job data are mounted, not baked: the checkpoints are large and
 # licensed separately, and job output should outlive the container.

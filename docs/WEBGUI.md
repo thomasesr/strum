@@ -32,6 +32,11 @@ constraints have no solution and the install dies with `ResolutionImpossible`.
 The image pins 3.11 for this reason; if you install by hand, use 3.11 too.
 Installing just `.[web]` has no such constraint.
 
+A C compiler is also needed at install time: `diffq`, a hard `audio-separator`
+dependency on Linux, publishes no cp311 wheel at any version and always builds
+from source. The image installs `build-essential` and removes it again in the
+same layer.
+
 The image is built on `python:3.11-slim` rather than a CUDA base: the torch
 cu126 wheels bundle the CUDA runtime and cuDNN they use, so the host
 requirement is the same either way -- NVIDIA driver plus
