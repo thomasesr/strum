@@ -26,6 +26,34 @@ pip install -e '.[full,web]'
 strum-web
 ```
 
+### Rebuilds
+
+Downloads live in BuildKit cache mounts, not in image layers. Those mounts are
+not part of the image and are **not** cleared by `--no-cache`, so a rebuild
+re-runs the install steps but does not re-fetch the ~4 GB of torch and CUDA
+wheels. Only `docker builder prune` throws them away.
+
+Layers are ordered so the expensive step survives ordinary work:
+
+| You changed | What rebuilds |
+|---|---|
+| Anything under `src/`, `scripts/`, `configs/` | Just the `COPY`. Seconds. |
+| `pyproject.toml` | Dependency install re-runs, but wheels come from the cache mount. |
+| `docker/Dockerfile` above the install | Everything after the edit; downloads still cached. |
+
+Dependencies are resolved against a stub `src/` package, so editing sources
+cannot invalidate the install layer. The real sources are copied afterwards and
+the editable install picks them up from the same path.
+
+Prefer plain `build` and let the layer cache work:
+
+```bash
+docker compose -f docker/docker-compose.yml build
+```
+
+Reach for `--no-cache` only to force a genuinely clean dependency resolve --
+it is not needed just because a previous build failed.
+
 **Python 3.11 only.** `basic-pitch` requires `tensorflow<2.15.1`, and
 TensorFlow shipped no cp312 wheels before 2.16, so on Python 3.12 the two
 constraints have no solution and the install dies with `ResolutionImpossible`.
