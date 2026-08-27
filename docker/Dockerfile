@@ -1,27 +1,38 @@
 # STRUM auto-charter web UI.
 #
-# CUDA runtime base: separation and transcription are GPU-bound, and the image
-# is unusable in practice on CPU (a 4-minute song takes hours). It still runs
-# without a GPU if you leave --gpus off; every model falls back to CPU.
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+# Python is pinned to 3.11 and must stay there: basic-pitch requires
+# tensorflow<2.15.1, and TensorFlow published no cp312 wheels until 2.16. On
+# 3.12 the two constraints have no solution and the install fails outright.
+#
+# There is no CUDA base image here on purpose. The torch cu126 wheels bundle
+# the CUDA runtime and cuDNN they need, so the host requirement is unchanged --
+# NVIDIA driver plus nvidia-container-toolkit -- while the image loses several
+# GB of duplicated CUDA layers.
+#
+# Separation and transcription are GPU-bound; the image still runs without
+# --gpus, but a 4-minute song takes hours on CPU.
+FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_BREAK_SYSTEM_PACKAGES=1
+    PIP_NO_CACHE_DIR=1
 
 # ffmpeg does the video demux and every audio encode; libsndfile backs soundfile.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv \
         ffmpeg libsndfile1 git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Torch first, from the CUDA index, so the dependency resolver below cannot
-# quietly pull the CPU-only build.
+# quietly pull the CPU-only build. TensorFlow arrives later as a basic-pitch
+# dependency but keeps its own CUDA libraries behind an `and-cuda` extra we
+# never request, so it cannot displace these.
+# torchvision is included even though nothing here uses it directly: it arrives
+# transitively via audio-separator -> onnx2torch, and letting pip pull it from
+# PyPI afterwards would drag the CPU-only torch build in with it.
 RUN pip install --index-url https://download.pytorch.org/whl/cu126 \
-        torch torchaudio
+        torch torchaudio torchvision
 
 COPY pyproject.toml README.md ./
 COPY src ./src

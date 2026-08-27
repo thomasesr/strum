@@ -26,6 +26,17 @@ pip install -e '.[full,web]'
 strum-web
 ```
 
+**Python 3.11 only.** `basic-pitch` requires `tensorflow<2.15.1`, and
+TensorFlow shipped no cp312 wheels before 2.16, so on Python 3.12 the two
+constraints have no solution and the install dies with `ResolutionImpossible`.
+The image pins 3.11 for this reason; if you install by hand, use 3.11 too.
+Installing just `.[web]` has no such constraint.
+
+The image is built on `python:3.11-slim` rather than a CUDA base: the torch
+cu126 wheels bundle the CUDA runtime and cuDNN they use, so the host
+requirement is the same either way -- NVIDIA driver plus
+nvidia-container-toolkit -- and the image is several GB smaller.
+
 ## Accepted input
 
 | Kind | Extensions | Handling |
