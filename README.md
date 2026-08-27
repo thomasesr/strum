@@ -149,7 +149,7 @@ python scripts/eval_benchmark.py \
 - Python 3.11+
 - PyTorch 2.x with CUDA
 - ffmpeg
-- ~6 GB disk for model checkpoints
+- ~2 GB disk for model checkpoints
 
 ### Installation
 
@@ -160,7 +160,20 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
-Model checkpoints (~6 GB) are not committed; download from the releases page or train locally (see below).
+Model checkpoints are not committed. They live on the Hugging Face Hub at
+[`opria123/strum`](https://huggingface.co/opria123/strum) — 1.8 GB across 16 files:
+
+```bash
+python scripts/fetch_checkpoints.py
+```
+
+The Hub groups files into `drums/`, `drums_classifier_ensemble/`, `guitar/` and
+`section_classifier/`, but the loaders read flat paths under `checkpoints/`, so a
+plain `huggingface-cli download --local-dir checkpoints/` produces a tree the
+pipeline cannot read. The script does the placement. `--list` shows the plan
+without downloading; `--only GROUP` fetches one model.
+
+Alternatively, train locally (see below).
 
 ### Generate Charts for a Song
 

@@ -70,6 +70,26 @@ cu126 wheels bundle the CUDA runtime and cuDNN they use, so the host
 requirement is the same either way -- NVIDIA driver plus
 nvidia-container-toolkit -- and the image is several GB smaller.
 
+## Model weights
+
+The charting models are not in the repo. Fetch them before the first run:
+
+```bash
+python scripts/fetch_checkpoints.py
+```
+
+That pulls 1.8 GB from [`opria123/strum`](https://huggingface.co/opria123/strum)
+into `checkpoints/`, which compose bind-mounts read-only into the container.
+Without them every job fails during transcription.
+
+Note that `huggingface-cli download opria123/strum --local-dir checkpoints/`
+is *not* equivalent: the Hub nests files under `drums/`, `guitar/` and so on,
+while the loaders expect flat paths. `fetch_checkpoints.py` maps between the
+two, taking the mapping from `push_to_hf.py` so the two directions cannot drift.
+
+Separation weights are not included here — Demucs and audio-separator download
+their own on first use, into `/models/cache` inside the container.
+
 ## Accepted input
 
 | Kind | Extensions | Handling |
