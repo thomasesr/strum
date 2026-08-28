@@ -41,8 +41,11 @@ WORKDIR /app
 # parse and backtracks instead. On scikit-learn that lands on a pre-wheel
 # release that builds through the removed numpy.distutils. Upgrading first keeps
 # the resolver on the versions this dependency set was verified against.
+# setuptools is pinned below 81, which is where pkg_resources was removed.
+# Several dependencies still import it, and its absence surfaces as unrelated
+# failures deep in the pipeline rather than at install time.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    pip install --upgrade pip setuptools wheel
+    pip install --upgrade pip wheel "setuptools<81"
 
 # Torch first, from the CUDA index, so the dependency resolver below cannot
 # quietly pull the CPU-only build. TensorFlow arrives later as a basic-pitch

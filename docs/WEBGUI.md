@@ -281,6 +281,7 @@ Finished jobs are cleaned up after `STRUM_WEB_RETAIN_HOURS`.
 | `GET` | `/api/jobs/{id}/download/{zip\|sng}` | Download a finished package. |
 | `GET` | `/api/jobs/{id}/log` | Full pipeline output as plain text. `?tail=N` for the last N lines. |
 | `GET` | `/api/logs` | Recent server log. `?tail=N`, `?level=WARNING`. |
+| `GET` | `/api/diagnostics` | Python, package versions, CUDA, `STRUM_*` env. |
 | `GET` | `/api/events` | SSE stream of job state; replays current state on connect. |
 
 ## Debugging remotely
@@ -296,6 +297,9 @@ curl -s http://strum:8000/api/jobs/<id>/log | tail -40
 # what has the server been doing?
 curl -s "http://strum:8000/api/logs?tail=200"
 curl -s "http://strum:8000/api/logs?level=WARNING"
+
+# what is actually installed in there?
+curl -s http://strum:8000/api/diagnostics | python3 -m json.tool
 ```
 
 The per-job log is written to disk as the pipeline runs, so it is complete --

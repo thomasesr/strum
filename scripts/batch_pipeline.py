@@ -24,6 +24,7 @@ if str(_scripts_dir) not in sys.path:
 
 import shutil
 import subprocess
+import traceback
 import json
 import re
 import logging
@@ -1882,6 +1883,9 @@ song_length = {duration_ms}
         except Exception as e:
             result.error = f"Preprocessing failed: {e}"
             logger.error(f"  ✗ Preprocessing failed: {e}")
+            # The message alone rarely identifies the culprit -- import errors in
+            # particular only make sense with the chain that produced them.
+            logger.error(traceback.format_exc())
             return result
         
         # Transcribe each instrument - isolated errors per instrument

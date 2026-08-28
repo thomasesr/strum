@@ -379,6 +379,63 @@ async def job_log(job_id: str, tail: int = 0) -> PlainTextResponse:
     return PlainTextResponse(text)
 
 
+@app.get("/api/diagnostics")
+async def diagnostics() -> dict:
+    """Versions and environment, for diagnosing a deployment you cannot shell into.
+
+    Dependency version skew -- torch against torchaudio, setuptools against
+    packages that still want pkg_resources -- surfaces as unrelated failures
+    deep in the pipeline, so it is worth being able to read the versions back.
+
+    Only STRUM_* environment variables are reported; the rest of the environment
+    is none of the browser's business.
+    """
+    import importlib.metadata as md
+    import platform
+
+    packages = [
+        "torch", "torchaudio", "torchvision", "demucs", "audio-separator",
+        "basic-pitch", "tensorflow", "librosa", "numpy", "setuptools",
+        "onnxruntime", "huggingface-hub", "soundfile", "mido",
+    ]
+    versions: dict[str, str] = {}
+    for name in packages:
+        try:
+            versions[name] = md.version(name)
+        except md.PackageNotFoundError:
+            versions[name] = "not installed"
+
+    cuda: dict[str, object] = {}
+    try:
+        import torch
+
+        cuda = {
+            "available": torch.cuda.is_available(),
+            "device_count": torch.cuda.device_count(),
+            "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "",
+            "torch_cuda": torch.version.cuda or "cpu build",
+        }
+    except Exception as e:
+        cuda = {"error": str(e)}
+
+    try:
+        import importlib
+        importlib.import_module("pkg_resources")
+        pkg_resources = "present"
+    except Exception as e:
+        pkg_resources = f"missing: {e}"
+
+    return {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": versions,
+        "pkg_resources": pkg_resources,
+        "cuda": cuda,
+        "env": {k: v for k, v in sorted(os.environ.items()) if k.startswith("STRUM_")},
+        "checkpoint_dir": str(weights.dest),
+    }
+
+
 @app.get("/api/logs")
 async def server_log(tail: int = 500, level: str = "INFO") -> PlainTextResponse:
     """Recent server log, as plain text.
