@@ -445,6 +445,37 @@ async def diagnostics() -> dict:
             "available_gb": round(info.get("MemAvailable", 0) / 1e9, 1),
             "swap_total_gb": round(info.get("SwapTotal", 0) / 1e9, 1),
         }
+
+        # SwapTotal counts zram, which is compressed memory living in RAM
+        # rather than storage. It is not extra capacity -- it competes for the
+        # same bytes -- so a host whose only swap is zram has no room to spill
+        # into when a stage spikes, however large SwapTotal looks.
+        devices = []
+        real_swap = 0
+        swaps = Path("/proc/swaps")
+        if swaps.exists():
+            for line in swaps.read_text().splitlines()[1:]:
+                fields = line.split()
+                if len(fields) < 4:
+                    continue
+                name, size_kb = fields[0], int(fields[2])
+                is_zram = "zram" in name
+                devices.append({
+                    "name": name,
+                    "size_gb": round(size_kb * 1024 / 1e9, 1),
+                    "used_gb": round(int(fields[3]) * 1024 / 1e9, 1),
+                    "zram": is_zram,
+                })
+                if not is_zram:
+                    real_swap += size_kb * 1024
+        memory["swap_devices"] = devices
+        memory["real_swap_gb"] = round(real_swap / 1e9, 1)
+        if devices and not real_swap:
+            memory["note"] = (
+                "All swap is zram (compressed RAM). It shares the same physical "
+                "memory rather than adding to it, so there is nowhere to spill "
+                "when a stage spikes. Add a swapfile on disk for real headroom."
+            )
         limit = Path("/sys/fs/cgroup/memory.max")
         if limit.exists():
             raw = limit.read_text().strip()

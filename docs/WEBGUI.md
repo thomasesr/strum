@@ -286,8 +286,20 @@ container.
 
 Ways to lower the peak, roughly in order of preference:
 
-- Give the host more RAM, or add swap. Charting is not latency-sensitive, so
-  swapping is an acceptable trade here.
+- Give the host more RAM, or add a swapfile **on disk**. Charting is not
+  latency-sensitive, so swapping is an acceptable trade here.
+- Check what your swap actually is. `zram` is compressed memory that lives in
+  RAM: it competes for the same bytes rather than adding to them, so a host
+  whose only swap is zram has nowhere to spill when a stage spikes, however
+  large `SwapTotal` looks. `/api/diagnostics` reports `real_swap_gb` separately
+  for exactly this reason.
+
+  ```bash
+  sudo fallocate -l 16G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile          # add to /etc/fstab to persist
+  ```
 - Turn off instruments you do not need. Guitar and bass each run basic-pitch,
   which is what brings TensorFlow in; drums alone stays on PyTorch.
 - Set a `mem_limit` in compose only to *protect the host* -- it makes the kill

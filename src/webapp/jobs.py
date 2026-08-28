@@ -86,8 +86,10 @@ def _exit_reason(returncode: int) -> str:
     if name == "SIGKILL":
         return (
             "Pipeline was killed (SIGKILL) — almost always the out-of-memory "
-            "killer. Charting loads PyTorch and TensorFlow at once; give the "
-            "host more RAM or swap, or disable an instrument to lower the peak."
+            "killer. Charting loads PyTorch and TensorFlow at once. Add RAM or "
+            "a swapfile on disk, or disable an instrument to lower the peak. "
+            "Note that zram does not help here: it is compressed memory living "
+            "in RAM, so it competes for the same bytes. See /api/diagnostics."
         )
     return f"Pipeline killed by {name}"
 
