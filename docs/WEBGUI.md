@@ -198,6 +198,12 @@ media at all, is rejected before it can reach the queue. Uploads shorter than
 | Karaoke pre-pass | Strip the lead vocal before separation. See [Separation](SEPARATION.md). |
 | Split backing vocals | Second pass isolating backing vocals. Costs one more separation run. |
 | Stem model | `Demucs htdemucs_6s` or `BS-RoFormer SW`. |
+
+Options the request does not specify fall back to the deployment's own settings
+(`STRUM_KARAOKE`, `STRUM_KARAOKE_BACKING_SPLIT`, `STRUM_SEPARATOR`), not to a
+hardcoded default, so a bare `POST /api/jobs` charts the way the container is
+configured to. The web UI reads the same values from `/api/config` and shows
+them, rather than whatever its markup happens to say.
 | Multi-track audio | One `.ogg` per instrument, which is what enables mute-on-miss in game. Off means a single mixed `song.ogg`. |
 | `.zip` / `.sng` | `.zip` extracts to a folder both games read. `.sng` is YARG's single-file container. |
 

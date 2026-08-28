@@ -36,7 +36,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.packaging.metadata import SongMeta
-from src.webapp.jobs import JobQueue, Options, Status
+from src.webapp.jobs import SEPARATORS, JobQueue, Options, Status
 from src.webapp.logbuffer import buffer as log_buffer, install as install_log_buffer
 from src.webapp.weights import separation, weights
 from src.webapp.media import (
@@ -131,10 +131,18 @@ def _bool(value: str | None, default: bool = False) -> bool:
 
 @app.get("/api/config")
 async def get_config() -> dict:
+    _d = Options.from_env()
     return {
         "allowed_extensions": sorted(ALLOWED_EXTS),
         "max_upload_mb": MAX_UPLOAD_MB,
         "retain_hours": RETAIN_HOURS,
+        # What a job gets when the request does not say otherwise, so the UI can
+        # show the deployment's settings instead of its own hardcoded ones.
+        "defaults": {
+            "karaoke": _d.karaoke,
+            "backing_split": _d.backing_split,
+            "separator": _d.separator,
+        },
         "weights": weights.public(),
         "separation": separation.public(),
     }
@@ -265,29 +273,43 @@ async def create_job(
     vocals: str = Form("true"),
     keys: str = Form("false"),
     stems: str = Form("true"),
-    karaoke: str = Form("true"),
-    backing_split: str = Form("false"),
-    separator: str = Form("demucs"),
+    karaoke: str | None = Form(None),
+    backing_split: str | None = Form(None),
+    separator: str | None = Form(None),
     formats: str = Form("zip,sng"),
 ) -> dict:
     """Queue a staged upload for charting."""
+    # Validate the cheap inputs before looking for the upload, so bad arguments
+    # report as bad arguments rather than as a missing upload.
+    #
+    # Anything the request leaves out falls back to the deployment's own
+    # settings rather than to a hardcoded value, so STRUM_* in compose actually
+    # decides what a bare API call does.
+    defaults = Options.from_env()
+
+    if separator is None:
+        resolved_separator = defaults.separator
+    elif separator.strip().lower() in SEPARATORS:
+        resolved_separator = SEPARATORS[separator.strip().lower()]
+    else:
+        raise HTTPException(400, f"Unknown separator: {separator}")
+
+    wanted = tuple(f for f in formats.split(",") if f in ("zip", "sng"))
+    if not wanted:
+        raise HTTPException(400, "Pick at least one package format")
+
     staging = _staging(_checked_id(upload_id))
     sources = [p for p in staging.glob("source.*")] if staging.is_dir() else []
     if not sources:
         raise HTTPException(404, "Upload expired or unknown; upload the file again")
 
-    if separator not in ("demucs", "bs_roformer_sw"):
-        raise HTTPException(400, "Unknown separator")
-    wanted = tuple(f for f in formats.split(",") if f in ("zip", "sng"))
-    if not wanted:
-        raise HTTPException(400, "Pick at least one package format")
-
     options = Options(
         drums=_bool(drums, True), guitar=_bool(guitar, True),
         bass=_bool(bass, True), vocals=_bool(vocals, True),
         keys=_bool(keys), stems=_bool(stems, True),
-        karaoke=_bool(karaoke, True), backing_split=_bool(backing_split),
-        separator=separator, formats=wanted,
+        karaoke=_bool(karaoke, defaults.karaoke),
+        backing_split=_bool(backing_split, defaults.backing_split),
+        separator=resolved_separator, formats=wanted,
     )
     meta = SongMeta(title=title, artist=artist, album=album,
                     year=year, genre=genre, charter=charter)

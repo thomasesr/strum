@@ -19,6 +19,16 @@ fetch('/api/config').then((r) => r.json()).then((cfg) => {
     cfg.allowed_extensions.map((e) => e.replace('.', '')).join(', ') +
     ` · up to ${cfg.max_upload_mb} MB`;
   showWeights(cfg.weights);
+
+  // Reflect the deployment's settings rather than the markup's. Without this
+  // the checkboxes silently disagree with what STRUM_* is configured to do.
+  const d = cfg.defaults || {};
+  if ('karaoke' in d) $('[name="karaoke"]').checked = d.karaoke;
+  if ('backing_split' in d) $('[name="backing_split"]').checked = d.backing_split;
+  if (d.separator) {
+    const sel = $('[name="separator"]');
+    if ([...sel.options].some((o) => o.value === d.separator)) sel.value = d.separator;
+  }
 });
 
 // --- model weights -------------------------------------------------------

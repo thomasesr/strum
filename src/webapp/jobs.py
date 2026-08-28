@@ -94,6 +94,23 @@ def _exit_reason(returncode: int) -> str:
     return f"Pipeline killed by {name}"
 
 
+# Accepted separator spellings, mapped to what the pipeline expects. The
+# RoFormer aliases exist because the env var and the docs have both been used.
+SEPARATORS = {
+    "demucs": "demucs",
+    "bs_roformer_sw": "bs_roformer_sw",
+    "bs_roformer": "bs_roformer_sw",
+    "roformer": "bs_roformer_sw",
+}
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "on", "yes")
+
+
 @dataclass
 class Options:
     """Per-job pipeline settings chosen in the web UI."""
@@ -108,6 +125,21 @@ class Options:
     backing_split: bool = False
     separator: str = "demucs"
     formats: tuple[str, ...] = ("zip", "sng")
+
+    @classmethod
+    def from_env(cls) -> "Options":
+        """Deployment defaults, for fields a request does not specify.
+
+        Without this the form defaults silently win, and the STRUM_* settings in
+        compose have no effect on anything submitted through the API.
+        """
+        return cls(
+            karaoke=_env_flag("STRUM_KARAOKE", True),
+            backing_split=_env_flag("STRUM_KARAOKE_BACKING_SPLIT", False),
+            separator=SEPARATORS.get(
+                os.environ.get("STRUM_SEPARATOR", "demucs").strip().lower(), "demucs"
+            ),
+        )
 
     def cli_flags(self) -> list[str]:
         flags = []
