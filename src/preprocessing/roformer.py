@@ -6,13 +6,17 @@ Produces the same stem set STRUM's downstream stages already expect
 hybrid-transformer Demucs. In practice it holds up better on dense mixes, which
 matters most for the `guitar` and `other` stems that feed basic-pitch.
 
-Weights (BS-Rofo-SW, "fixed" release):
-    ckpt   bs_6stem_fixed.ckpt
-    config bs_6stem_fixed_config.yaml
-    https://huggingface.co/jarredou/BS-ROFO-SW-Fixed
+Runs through `audio-separator`, which carries this checkpoint in its registry as
+`BS-Roformer-SW.ckpt` and downloads it on demand — the same path the karaoke
+model already uses.
 
-There is no pip package, so inference goes through a ZFTurbo MSST checkout —
-see src/preprocessing/msst.py. Select it at run time with STRUM_SEPARATOR=bs_roformer_sw.
+MSST is supported as a fallback for checkpoints the registry does not carry, but
+is no longer the default: its inference entry point imports bitsandbytes, peft
+and loralib unconditionally, and peft pulls numpy 2.x while TensorFlow 2.15 and
+audio-separator both pin numpy<2. Installing it would destabilise the image for
+one optional backend.
+
+Select this backend with STRUM_SEPARATOR=bs_roformer_sw.
 """
 
 from __future__ import annotations
@@ -38,6 +42,9 @@ STEM_ALIASES = {"piano": ["piano", "keys", "keyboard"]}
 class RoformerConfig:
     """Settings for the BS-RoFormer SW 6-stem pass."""
 
+    # audio-separator registry name; used unless an MSST checkpoint is given.
+    model: str = "BS-Roformer-SW.ckpt"
+    model_dir: Path | None = None
     ckpt: Path | None = None
     cfg: Path | None = None
     msst_dir: Path | None = None
@@ -52,6 +59,8 @@ class RoformerConfig:
             return Path(raw) if raw else None
 
         c = cls(**overrides)
+        c.model = os.environ.get("STRUM_ROFORMER_MODEL", c.model)
+        c.model_dir = _path("STRUM_ROFORMER_MODEL_DIR") or _path("STRUM_KARAOKE_MODEL_DIR") or c.model_dir
         c.ckpt = _path("STRUM_ROFORMER_CKPT") or c.ckpt
         c.cfg = _path("STRUM_ROFORMER_CFG") or c.cfg
         c.msst_dir = _path("STRUM_ROFORMER_MSST") or c.msst_dir
@@ -75,6 +84,36 @@ def _resolve_aliases(found: dict[str, Path], produced: list[Path]) -> dict[str, 
                 claimed.add(hit)
                 break
     return found
+
+
+def _run_audio_separator(audio_path: Path, out_dir: Path, cfg: "RoformerConfig") -> list[Path]:
+    """Separate with audio-separator and return the files it wrote.
+
+    Frees the model afterwards: at ~700 MB it would otherwise stay resident for
+    the rest of the job, which on a 6 GB card comes straight out of the budget
+    for the transcription models that follow.
+    """
+    from audio_separator.separator import Separator
+
+    from src.preprocessing.gpu import free_gpu
+
+    kwargs: dict = {
+        "output_dir": str(out_dir),
+        "output_format": "WAV",
+        "log_level": logging.WARNING,
+    }
+    if cfg.model_dir is not None:
+        kwargs["model_file_dir"] = str(cfg.model_dir)
+
+    sep = Separator(**kwargs)
+    sep.load_model(model_filename=cfg.model)
+    try:
+        outputs = sep.separate(str(audio_path))
+    finally:
+        del sep
+        free_gpu("BS-RoFormer separation")
+
+    return [p if (p := Path(o)).is_absolute() else out_dir / p.name for o in outputs]
 
 
 def separate_6stem_roformer(
@@ -105,26 +144,26 @@ def separate_6stem_roformer(
             if (output_dir / f"{s}.wav").exists()
         }
 
-    if cfg.ckpt is None or cfg.cfg is None:
-        logger.warning(
-            "  ⚠ BS-RoFormer selected but STRUM_ROFORMER_CKPT / STRUM_ROFORMER_CFG "
-            "are unset; falling back to Demucs"
-        )
-        return {}
+    # An explicit MSST checkpoint wins; otherwise the model comes from the
+    # audio-separator registry, which carries this one and fetches it on demand.
+    backend = "msst" if (cfg.ckpt and cfg.cfg) else "audio-separator"
 
     work = output_dir / "_roformer_tmp"
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    logger.info("  Separating stems with BS-RoFormer SW (6-stem)...")
+    logger.info(f"  Separating stems with BS-RoFormer SW ({backend})...")
     t0 = time.time()
     try:
-        produced = run_msst(
-            audio_path, work,
-            model_type=cfg.model_type, ckpt=cfg.ckpt, config=cfg.cfg,
-            msst_dir=cfg.msst_dir, device_ids=cfg.device_ids, timeout_s=cfg.timeout_s,
-        )
+        if backend == "msst":
+            produced = run_msst(
+                audio_path, work,
+                model_type=cfg.model_type, ckpt=cfg.ckpt, config=cfg.cfg,
+                msst_dir=cfg.msst_dir, device_ids=cfg.device_ids, timeout_s=cfg.timeout_s,
+            )
+        else:
+            produced = _run_audio_separator(audio_path, work, cfg)
         found = _resolve_aliases(classify_stems(produced, ROFORMER_STEMS), produced)
         missing = [s for s in core if s not in found]
         if missing:

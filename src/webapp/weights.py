@@ -199,12 +199,11 @@ def ensure_karaoke_model() -> None:
 
 
 def ensure_roformer_model() -> None:
-    """Fetch BS-RoFormer SW weights and point the pipeline at them.
+    """Pre-download BS-RoFormer SW, when that backend is selected.
 
-    Only runs when that backend is actually selected: it is 700 MB, and the
-    default stem model is Demucs. Setting the env vars here is what makes the
-    backend usable without hand-configuring paths -- the pipeline subprocess
-    inherits this process's environment.
+    Only runs when selected: it is ~700 MB and Demucs is the default. It comes
+    from the audio-separator registry, the same route as the karaoke model, so
+    there is no MSST checkout or separate checkpoint path to manage.
     """
     if os.environ.get("STRUM_SEPARATOR", "demucs").strip().lower() not in (
         "bs_roformer_sw", "bs_roformer", "roformer"
@@ -213,14 +212,32 @@ def ensure_roformer_model() -> None:
         separation.steps["roformer"] = "skipped (not selected)"
         return
 
-    _ensure_msst_checkout()
+    from src.preprocessing.roformer import RoformerConfig
 
-    dest = SEPARATION_DIR / "roformer"
-    ckpt = _hf_download(MVSEP_REPO, ROFORMER_CKPT, dest / Path(ROFORMER_CKPT).name)
-    cfg = _hf_download(MVSEP_REPO, ROFORMER_CFG, dest / Path(ROFORMER_CFG).name)
-    os.environ.setdefault("STRUM_ROFORMER_CKPT", str(ckpt))
-    os.environ.setdefault("STRUM_ROFORMER_CFG", str(cfg))
-    logger.info(f"BS-RoFormer SW weights ready in {dest}")
+    cfg = RoformerConfig.from_env()
+    if cfg.ckpt and cfg.cfg:
+        # An explicit checkpoint means MSST, which needs its checkout present.
+        logger.info(f"BS-RoFormer SW using explicit checkpoint {cfg.ckpt}")
+        _ensure_msst_checkout()
+        return
+
+    model_dir = cfg.model_dir or KARAOKE_MODEL_DIR
+    model_dir.mkdir(parents=True, exist_ok=True)
+    if (model_dir / cfg.model).exists():
+        logger.info(f"BS-RoFormer SW model present: {cfg.model}")
+        return
+
+    from audio_separator.separator import Separator
+
+    logger.info(f"Fetching {cfg.model} into {model_dir}")
+    sep = Separator(
+        model_file_dir=str(model_dir),
+        output_dir=str(model_dir / "_scratch"),
+        log_level=logging.WARNING,
+    )
+    sep.download_model_files(cfg.model) if hasattr(sep, "download_model_files") \
+        else sep.load_model(model_filename=cfg.model)
+    logger.info("BS-RoFormer SW model ready")
 
 
 def _ensure_msst_checkout() -> None:
