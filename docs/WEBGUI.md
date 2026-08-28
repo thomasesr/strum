@@ -279,4 +279,36 @@ Finished jobs are cleaned up after `STRUM_WEB_RETAIN_HOURS`.
 | `GET` | `/api/jobs/{id}?log=N` | One job, with the last N log lines. |
 | `POST` | `/api/jobs/{id}/cancel` | Kill or dequeue a job. |
 | `GET` | `/api/jobs/{id}/download/{zip\|sng}` | Download a finished package. |
+| `GET` | `/api/jobs/{id}/log` | Full pipeline output as plain text. `?tail=N` for the last N lines. |
+| `GET` | `/api/logs` | Recent server log. `?tail=N`, `?level=WARNING`. |
 | `GET` | `/api/events` | SSE stream of job state; replays current state on connect. |
+
+## Debugging remotely
+
+When a chart comes out wrong, or a job fails for a reason the status line does
+not explain, the logs are reachable over HTTP rather than only through
+`docker compose logs`:
+
+```bash
+# why did this job fail?
+curl -s http://strum:8000/api/jobs/<id>/log | tail -40
+
+# what has the server been doing?
+curl -s "http://strum:8000/api/logs?tail=200"
+curl -s "http://strum:8000/api/logs?level=WARNING"
+```
+
+The per-job log is written to disk as the pipeline runs, so it is complete --
+the copy in the JSON job endpoint is capped at 500 lines, and a diagnosis
+usually needs the lines *before* the failure, which are the first to be dropped.
+Each job in the UI also links to its log.
+
+The server log is an in-memory ring buffer of the last few thousand lines. It
+covers weight downloads, job lifecycle and separation fallbacks. Per-request
+chatter from uvicorn's access log and httpx is filtered below WARNING, since it
+would otherwise push everything useful out within seconds.
+
+Both endpoints are unauthenticated, like the rest of the service, and the output
+contains uploaded filenames and server paths. That is one more reason to keep
+the published port on `127.0.0.1` unless you have put authentication in front.
+

@@ -32,11 +32,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.packaging.metadata import SongMeta
 from src.webapp.jobs import JobQueue, Options, Status
+from src.webapp.logbuffer import buffer as log_buffer, install as install_log_buffer
 from src.webapp.weights import separation, weights
 from src.webapp.media import (
     ALLOWED_EXTS,
@@ -107,6 +108,7 @@ async def _fetch_weights() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_log_buffer()
     queue.start()
     # Checked against the mounted volume, not baked into the image. Started as a
     # task rather than awaited so the UI is reachable while 1.8 GB arrives;
@@ -350,6 +352,46 @@ async def download(job_id: str, fmt: str):
     if not path.exists():
         raise HTTPException(410, "Package has been cleaned up")
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+@app.get("/api/jobs/{job_id}/log")
+async def job_log(job_id: str, tail: int = 0) -> PlainTextResponse:
+    """Full pipeline output for one job, as plain text.
+
+    Served from disk, so it is the complete log rather than the capped copy the
+    JSON endpoint carries. `tail` limits it to the last N lines; 0 means all.
+    """
+    job = queue.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "No such job")
+
+    path = queue.log_path(job_id)
+    if path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace")
+    elif job.log:
+        # The pipeline may not have started yet, or the file aged out.
+        text = "\n".join(job.log) + "\n"
+    else:
+        text = f"No pipeline output yet (job is {job.status.value}).\n"
+
+    if tail > 0:
+        text = "\n".join(text.splitlines()[-tail:]) + "\n"
+    return PlainTextResponse(text)
+
+
+@app.get("/api/logs")
+async def server_log(tail: int = 500, level: str = "INFO") -> PlainTextResponse:
+    """Recent server log, as plain text.
+
+    This is the app's own logging -- weight downloads, job lifecycle, separation
+    fallbacks -- which otherwise only exists in the container's stdout. `level`
+    filters to that severity and above.
+    """
+    threshold = logging.getLevelName(level.strip().upper())
+    if not isinstance(threshold, int):
+        raise HTTPException(400, f"Unknown log level: {level}")
+    lines = log_buffer.tail(limit=max(0, min(tail, 5000)), min_level=threshold)
+    return PlainTextResponse(("\n".join(lines) + "\n") if lines else "(no log yet)\n")
 
 
 @app.get("/api/events")

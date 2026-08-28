@@ -165,6 +165,10 @@ class JobQueue:
     def job_dir(self, job_id: str) -> Path:
         return self.data_dir / job_id
 
+    def log_path(self, job_id: str) -> Path:
+        """Full pipeline output. The in-memory log is capped; this is not."""
+        return self.job_dir(job_id) / "pipeline.log"
+
     # -- pub/sub -----------------------------------------------------------
 
     def subscribe(self) -> asyncio.Queue:
@@ -381,22 +385,31 @@ class JobQueue:
         return "Pipeline produced no chart"
 
     async def _pump_logs(self, job: Job, proc: asyncio.subprocess.Process) -> None:
-        """Stream the child's output into the job log, updating the stage as it goes."""
+        """Stream the child's output into the job log, updating the stage as it goes.
+
+        Also written to disk unabridged: the in-memory copy is capped so a long
+        run cannot grow without bound, but a diagnosis usually needs the lines
+        before the failure, which are the first to be dropped.
+        """
         assert proc.stdout is not None
-        while True:
-            raw = await proc.stdout.readline()
-            if not raw:
-                break
-            line = raw.decode("utf-8", errors="replace").rstrip()
-            if not line:
-                continue
-            job.log.append(line)
-            if len(job.log) > self.max_log_lines:
-                del job.log[: len(job.log) - self.max_log_lines]
-            for marker, label, fraction in STAGE_MARKERS:
-                if marker in line and fraction > job.progress:
-                    self._set(job, stage=label, progress=fraction)
+        path = self.log_path(job.id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", buffering=1) as fh:
+            while True:
+                raw = await proc.stdout.readline()
+                if not raw:
                     break
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if not line:
+                    continue
+                fh.write(line + "\n")
+                job.log.append(line)
+                if len(job.log) > self.max_log_lines:
+                    del job.log[: len(job.log) - self.max_log_lines]
+                for marker, label, fraction in STAGE_MARKERS:
+                    if marker in line and fraction > job.progress:
+                        self._set(job, stage=label, progress=fraction)
+                        break
 
     def _cleanup_old(self) -> None:
         """Drop finished jobs and their files once they age out."""

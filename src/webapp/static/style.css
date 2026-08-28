@@ -159,3 +159,5 @@ button { font: inherit; cursor: pointer; border-radius: 8px; }
 }
 .banner[data-state="failed"] { border-left-color: var(--bad); color: var(--bad); }
 .banner .bar { margin-top: .6rem; }
+
+.log-link { text-decoration: none; display: inline-block; line-height: 1.4; }

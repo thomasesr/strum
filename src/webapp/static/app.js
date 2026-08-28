@@ -284,6 +284,17 @@ function render(job) {
     cancel.onclick = () => fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' });
     actions.append(cancel);
   }
+  // Opens the full pipeline output. The main reason a job fails is visible in
+  // the status line, but the lines before it are what explain why.
+  if (job.status !== 'queued') {
+    const log = document.createElement('a');
+    log.className = 'ghost log-link';
+    log.href = `/api/jobs/${job.id}/log`;
+    log.target = '_blank';
+    log.rel = 'noopener';
+    log.textContent = 'Log';
+    actions.append(log);
+  }
   if (actions.childElementCount) li.append(actions);
 }
 
