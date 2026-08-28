@@ -79,6 +79,31 @@ The `STRUM_DRUMS_DEMUCS` specialist pass still runs on top of either backend:
 the drums models were tuned on `htdemucs_ft` drum stems, so that stem is
 re-extracted with Demucs regardless of the Stage 1 choice.
 
+## VRAM
+
+The pipeline runs several large models in sequence in one process. None of them
+need to be resident together, but Python holds each one until its last
+reference goes -- and these are held in reference cycles, so `del` alone does
+not release them -- while PyTorch keeps freed blocks in its caching allocator
+rather than returning them to the driver.
+
+Left alone that accumulates. Measured on a 6 GB card: karaoke separation ~2.3 GB,
+then ~5.8 GB once the 6-stem pass loads on top of it, before drums or guitar have
+loaded anything at all. Anything larger, or any two stages overlapping, is a CUDA
+out-of-memory error.
+
+Each stage now calls `free_gpu()` when it is done, which collects and returns the
+blocks to the driver, so the peak is roughly the largest single model rather than
+their sum. `/api/diagnostics` reports total and free VRAM, and each release is
+logged with what it recovered:
+
+```
+VRAM after karaoke separation: 0.41 GB in use (released 2.15 GB)
+```
+
+The MSST backends are unaffected either way: they run as a subprocess, so their
+memory goes back when it exits.
+
 ## Environment variables
 
 | Variable | Default | Meaning |

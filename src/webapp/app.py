@@ -415,6 +415,12 @@ async def diagnostics() -> dict:
             "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "",
             "torch_cuda": torch.version.cuda or "cpu build",
         }
+        if torch.cuda.is_available():
+            # Total VRAM is the real ceiling on which separation models fit;
+            # free is what is left with the server idle.
+            free, total = torch.cuda.mem_get_info()
+            cuda["vram_total_gb"] = round(total / 1e9, 1)
+            cuda["vram_free_gb"] = round(free / 1e9, 1)
     except Exception as e:
         cuda = {"error": str(e)}
 

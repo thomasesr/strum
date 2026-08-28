@@ -136,16 +136,24 @@ def _run_audio_separator(
     if model_dir is not None:
         kwargs["model_file_dir"] = str(model_dir)
 
+    from src.preprocessing.gpu import free_gpu
+
     sep = Separator(**kwargs)
     sep.load_model(model_filename=model)
 
     custom = {"Vocals": vocal_name, "Instrumental": inst_name}
     try:
-        outputs = sep.separate(str(audio_path), custom_output_names=custom)
-    except TypeError:
-        # Older audio-separator has no custom_output_names; fall back to
-        # whatever it names them and classify after the fact.
-        outputs = sep.separate(str(audio_path))
+        try:
+            outputs = sep.separate(str(audio_path), custom_output_names=custom)
+        except TypeError:
+            # Older audio-separator has no custom_output_names; fall back to
+            # whatever it names them and classify after the fact.
+            outputs = sep.separate(str(audio_path))
+    finally:
+        # This model is ~2.3 GB of VRAM and is finished with. Held onto, it
+        # comes straight out of the budget for the 6-stem pass that follows.
+        del sep
+        free_gpu("karaoke separation")
 
     paths = [p if (p := Path(o)).is_absolute() else out_dir / p.name for o in outputs]
     return _classify(paths)

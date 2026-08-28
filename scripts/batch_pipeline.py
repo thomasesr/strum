@@ -448,6 +448,8 @@ class BatchPipeline:
         from demucs.apply import apply_model
         import torch
 
+        from src.preprocessing.gpu import free_gpu
+
         logger.info("  Separating stems...")
 
         stem_dir = work_dir / "stems"
@@ -494,7 +496,16 @@ class BatchPipeline:
             waveform_norm = (waveform - ref.mean()) / ref.std()
             sources = apply_model(model, waveform_norm[None].to(device), device=device)[0]
             sources = sources * ref.std() + ref.mean()
-            return model.sources, sources, target_sr
+
+            # Pull the result off the GPU and drop the model before returning.
+            # Otherwise every model this pipeline loads stays resident for the
+            # whole run, and on a 6 GB card the separation stages alone reach
+            # the limit before drums or guitar have loaded anything.
+            names = list(model.sources)
+            sources = sources.cpu()
+            del model, waveform, waveform_norm, ref
+            free_gpu(f"demucs {model_name}")
+            return names, sources, target_sr
 
         # Stage 1: 6-stem separation. BS-RoFormer SW is a full alternative to
         # Demucs over the same stem set; it returns {} when its weights are not
@@ -546,6 +557,9 @@ class BatchPipeline:
             except Exception as e:
                 logger.warning(f"    ⚠ {drums_demucs} drums pass failed, keeping {self.demucs_model} drums: {e}")
 
+        # Transcription loads its own networks next; nothing from separation is
+        # needed on the GPU any more.
+        free_gpu("separation")
         return stems
     
     def transcribe_drums(self, drums_stem: Path, tempo_bpm: float,
