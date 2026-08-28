@@ -282,17 +282,25 @@ class JobQueue:
 
         # Video uploads get demuxed here; the pipeline only ever sees audio.
         source = next(in_dir.glob("source.*"))
-        audio = await asyncio.to_thread(extract_audio, source, work / "audio")
-        if audio != source:
-            # batch_pipeline takes a directory, so the extracted track must be
-            # the only file it finds.
-            staged = work / "audio"
-            for stray in staged.glob("*"):
-                if stray != audio:
-                    stray.unlink()
-            audio_dir = staged
-        else:
-            audio_dir = in_dir
+        audio = await asyncio.to_thread(extract_audio, source, work / "extracted")
+
+        # batch_pipeline takes a directory and reads artist/title off the
+        # filename, so present it one file named the way it expects. Without
+        # this it sees "source.mp3", logs "Unknown Artist - source", and wastes
+        # its MusicBrainz and album-art lookups on that.
+        audio_dir = work / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        for stray in audio_dir.iterdir():
+            stray.unlink()
+        stem = safe_name(
+            f"{job.meta.artist} - {job.meta.title}".strip(" -"),
+            fallback=Path(job.filename).stem,
+        )
+        staged = audio_dir / f"{stem}{audio.suffix}"
+        try:
+            staged.symlink_to(audio.resolve())
+        except OSError:
+            shutil.copy2(audio, staged)
 
         env = {**os.environ, **job.options.env(), "PYTHONUNBUFFERED": "1"}
         cmd = [sys.executable, str(PIPELINE_SCRIPT), str(audio_dir), str(out_dir),
@@ -323,14 +331,21 @@ class JobQueue:
             return
 
         self._set(job, stage="Packaging", progress=0.96)
+
+        # batch_pipeline exits 0 even when every song fails, and it creates the
+        # song folder before charting, so neither the return code nor the
+        # folder's existence proves anything. The chart file does.
         song_folders = [p for p in out_dir.iterdir() if p.is_dir()] if out_dir.exists() else []
-        if not song_folders:
+        charted = [p for p in song_folders if (p / "notes.mid").exists()]
+        if not charted:
+            reason = self._failure_reason(job)
             self._set(job, status=Status.FAILED, stage="Failed",
-                      error="Pipeline produced no song folder",
+                      error=reason,
                       duration_s=time.time() - started, finished_at=time.time())
+            logger.error(f"Job {job.id} produced no chart: {reason}")
             return
 
-        song = song_folders[0]
+        song = charted[0]
 
         # Corrections are applied after charting: the pipeline guesses artist
         # and title from the filename, and that guess drives the folder name,
@@ -352,6 +367,18 @@ class JobQueue:
             packages={fmt: str(path) for fmt, path in packages.items()},
             duration_s=time.time() - started, finished_at=time.time(),
         )
+
+    @staticmethod
+    def _failure_reason(job: Job) -> str:
+        """Pull the pipeline's own error out of the log, for the UI to show.
+
+        Its summary lines are far more useful than "produced no chart", and the
+        user cannot see container logs.
+        """
+        for line in reversed(job.log):
+            if "✗" in line or " - ERROR - " in line:
+                return line.split(" - ERROR - ")[-1].split("✗")[-1].strip()
+        return "Pipeline produced no chart"
 
     async def _pump_logs(self, job: Job, proc: asyncio.subprocess.Process) -> None:
         """Stream the child's output into the job log, updating the stage as it goes."""

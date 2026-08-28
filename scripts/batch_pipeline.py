@@ -251,9 +251,14 @@ class BatchPipeline:
             phase_offset_ms = float(audio_info.get("phase_offset_ms", 0.0))
             tempo_events_full = audio_info.get("tempo_events", None)
             logger.info(f"  BPM (grid-aligned): {tempo:.1f}  phase_offset={phase_offset_ms:.1f}ms")
-        except Exception:
-            # Fallback: librosa.feature.rhythm.tempo (not beat_track which gives subharmonics)
-            tempo = librosa.feature.rhythm.tempo(y=y, sr=sr)
+        except Exception as e:
+            # Worth logging: this is the grid-aligned estimate the charts are
+            # built on, and the fallback below is markedly worse.
+            logger.warning(f"  Grid-aligned BPM failed ({e}); falling back to librosa")
+            # librosa 0.11 removed feature.rhythm; tempo moved to librosa.beat.tempo.
+            # beat_track is not a substitute here -- it reports subharmonics.
+            tempo_fn = getattr(librosa.beat, "tempo", None) or librosa.feature.rhythm.tempo
+            tempo = tempo_fn(y=y, sr=sr)
             if hasattr(tempo, '__len__'):
                 tempo = float(tempo[0])
             logger.info(f"  BPM (librosa): {tempo:.1f}")
