@@ -1,6 +1,7 @@
 # STRUM auto-charter.
 #
-#   docker/build.sh
+#   docker/build.sh          # build
+#   docker/build.sh up -d    # start
 #
 # Use that wrapper rather than calling compose directly: the Dockerfile relies
 # on BuildKit cache mounts, and installs that default to the legacy builder fail

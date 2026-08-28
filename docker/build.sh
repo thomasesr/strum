@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and start the STRUM web UI with BuildKit enabled.
+# Build the STRUM web UI image with BuildKit enabled.
 #
 # The Dockerfile uses cache mounts to hold ~4 GB of torch and CUDA wheels
 # outside the image layers. Those need BuildKit. Some Docker installs still
@@ -25,11 +25,13 @@ else
     exit 1
 fi
 
-# Default to build+start; pass any other compose subcommand through, e.g.
-#   docker/build.sh build
+# Builds only. Starting the container is a separate, deliberate step, so a
+# rebuild never restarts a running job. Any compose subcommand passes through:
+#   docker/build.sh up -d      # start it
 #   docker/build.sh logs -f
+#   docker/build.sh down
 if [ "$#" -eq 0 ]; then
-    set -- up -d --build
+    set -- build
 fi
 
 echo "==> ${compose[*]} -f $COMPOSE_FILE $*"

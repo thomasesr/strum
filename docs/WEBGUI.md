@@ -15,9 +15,13 @@ browser ──upload──► FastAPI ──► queue (one job at a time)
 ## Running it
 
 ```bash
-docker/build.sh
+docker/build.sh          # build the image
+docker/build.sh up -d    # start it
 # then open http://127.0.0.1:8000
 ```
+
+Building and starting are separate on purpose, so a rebuild never restarts a
+job that is mid-run.
 
 The wrapper exists for one reason: the Dockerfile uses BuildKit cache mounts to
 keep the ~4 GB of wheels out of the image layers, and some Docker installs still
@@ -27,14 +31,15 @@ default to the legacy builder, which fails with:
 the --mount option requires BuildKit
 ```
 
-`docker/build.sh` forces the right builder and passes any compose subcommand
-through (`docker/build.sh logs -f`, `docker/build.sh down`, and so on).
+`docker/build.sh` forces the right builder. With no arguments it builds;
+anything else is passed straight to compose (`docker/build.sh up -d`,
+`docker/build.sh logs -f`, `docker/build.sh down`).
 
 To use plain compose instead, either export the variables per command:
 
 ```bash
 DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-  docker compose -f docker/docker-compose.yml up -d --build
+  docker compose -f docker/docker-compose.yml build
 ```
 
 or turn BuildKit on permanently in `/etc/docker/daemon.json`:
@@ -91,7 +96,7 @@ editable install points at `/app/src` either way.
 Prefer plain `build` and let the layer cache work:
 
 ```bash
-docker/build.sh build
+docker/build.sh
 ```
 
 Reach for `--no-cache` only to force a genuinely clean dependency resolve --
