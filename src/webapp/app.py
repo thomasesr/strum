@@ -479,6 +479,28 @@ async def diagnostics() -> dict:
                 "adds little usable headroom for charting. A swapfile on disk "
                 "would give real spill space."
             )
+        # ZFS ARC is not counted as used memory by MemAvailable's reckoning,
+        # but it is real RAM the pipeline cannot have until ARC gives it back,
+        # and ARC reclaims slowly relative to a sudden multi-GB allocation.
+        # Default zfs_arc_max is half of RAM, which on a 16 GB host is enough to
+        # decide whether a run fits.
+        arcstats = Path("/proc/spl/kstat/zfs/arcstats")
+        if arcstats.exists():
+            arc = {}
+            for line in arcstats.read_text().splitlines():
+                fields = line.split()
+                if len(fields) == 3 and fields[0] in ("size", "c_max", "c_min"):
+                    arc[fields[0]] = int(fields[2])
+            memory["zfs_arc"] = {
+                "current_gb": round(arc.get("size", 0) / 1e9, 1),
+                "max_gb": round(arc.get("c_max", 0) / 1e9, 1),
+                "hint": (
+                    "ARC holds real RAM and reclaims slowly under a sudden "
+                    "allocation. Cap it with zfs_arc_max if charting is being "
+                    "OOM-killed."
+                ),
+            }
+
         limit = Path("/sys/fs/cgroup/memory.max")
         if limit.exists():
             raw = limit.read_text().strip()
