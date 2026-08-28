@@ -98,6 +98,14 @@ COPY configs ./configs
 # is downloaded at build time.
 VOLUME ["/data", "/app/checkpoints", "/models"]
 
+# TensorFlow arrives with basic-pitch and tries to claim the GPU on import,
+# which fails here (its CUDA libraries are not installed) after reserving
+# memory and printing several screens of errors. Charting is memory-bound --
+# torch and TensorFlow are loaded at once -- so this is worth suppressing.
+ENV TF_CPP_MIN_LOG_LEVEL=2 \
+    TF_FORCE_GPU_ALLOW_GROWTH=true \
+    CUDA_MODULE_LOADING=LAZY
+
 ENV STRUM_WEB_HOST=0.0.0.0 \
     STRUM_WEB_PORT=8000 \
     STRUM_WEB_DATA_DIR=/data \

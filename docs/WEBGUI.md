@@ -267,6 +267,27 @@ The compose file therefore publishes to `127.0.0.1` by default. Set
 `STRUM_BIND=0.0.0.0` only on a network you trust, and put a reverse proxy with
 authentication in front of it for anything beyond that.
 
+## Memory
+
+Charting is memory-hungry in a way that is easy to miss: the drum and guitar
+stages load PyTorch, and basic-pitch loads TensorFlow, and for part of the run
+both are resident at once alongside the separated stems.
+
+If the pipeline is killed with SIGKILL -- reported in the UI as such, rather
+than as a bare exit code -- that is the kernel's out-of-memory killer, not a
+bug in the chart. `/api/diagnostics` reports total, available and swap memory,
+plus any cgroup limit, which is the number that actually applies inside a
+container.
+
+Ways to lower the peak, roughly in order of preference:
+
+- Give the host more RAM, or add swap. Charting is not latency-sensitive, so
+  swapping is an acceptable trade here.
+- Turn off instruments you do not need. Guitar and bass each run basic-pitch,
+  which is what brings TensorFlow in; drums alone stays on PyTorch.
+- Set a `mem_limit` in compose only to *protect the host* -- it makes the kill
+  happen sooner, not later.
+
 ## Job behaviour
 
 Jobs run strictly one at a time — one song already saturates a GPU, so a queue

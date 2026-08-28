@@ -18,6 +18,7 @@ import contextlib
 import logging
 import os
 import shutil
+import signal
 import sys
 import time
 import uuid
@@ -64,6 +65,31 @@ STAGE_MARKERS: list[tuple[str, str, float]] = [
     ("Multi-track audio", "Writing audio tracks", 0.92),
     ("Created: song.ini", "Writing metadata", 0.95),
 ]
+
+
+def _exit_reason(returncode: int) -> str:
+    """Explain a non-zero pipeline exit.
+
+    A negative code means the child was killed by a signal, which subprocess
+    reports as the negated signal number. SIGKILL is worth calling out by name:
+    on this pipeline it is almost always the kernel OOM killer, and "exited with
+    code -9" gives the user nothing to act on.
+    """
+    if returncode >= 0:
+        return f"Pipeline exited with code {returncode}"
+
+    try:
+        name = signal.Signals(-returncode).name
+    except ValueError:
+        return f"Pipeline killed by signal {-returncode}"
+
+    if name == "SIGKILL":
+        return (
+            "Pipeline was killed (SIGKILL) — almost always the out-of-memory "
+            "killer. Charting loads PyTorch and TensorFlow at once; give the "
+            "host more RAM or swap, or disable an instrument to lower the peak."
+        )
+    return f"Pipeline killed by {name}"
 
 
 @dataclass
@@ -329,9 +355,9 @@ class JobQueue:
         if returncode != 0:
             tail = "\n".join(job.log[-15:])
             self._set(job, status=Status.FAILED, stage="Failed",
-                      error=f"Pipeline exited with code {returncode}",
+                      error=_exit_reason(returncode),
                       duration_s=time.time() - started, finished_at=time.time())
-            logger.error(f"Job {job.id} failed:\n{tail}")
+            logger.error(f"Job {job.id} failed ({_exit_reason(returncode)}):\n{tail}")
             return
 
         self._set(job, stage="Packaging", progress=0.96)

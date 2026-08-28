@@ -425,9 +425,33 @@ async def diagnostics() -> dict:
     except Exception as e:
         pkg_resources = f"missing: {e}"
 
+    memory: dict[str, object] = {}
+    try:
+        # /proc/meminfo rather than psutil, which is not a dependency. Inside a
+        # container this reports the host's memory unless a cgroup limit is set,
+        # which is exactly the number that matters for an OOM kill.
+        info = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            info[key] = int(rest.strip().split()[0]) * 1024
+        memory = {
+            "total_gb": round(info.get("MemTotal", 0) / 1e9, 1),
+            "available_gb": round(info.get("MemAvailable", 0) / 1e9, 1),
+            "swap_total_gb": round(info.get("SwapTotal", 0) / 1e9, 1),
+        }
+        limit = Path("/sys/fs/cgroup/memory.max")
+        if limit.exists():
+            raw = limit.read_text().strip()
+            memory["cgroup_limit_gb"] = (
+                "unlimited" if raw == "max" else round(int(raw) / 1e9, 1)
+            )
+    except Exception as e:
+        memory = {"error": str(e)}
+
     return {
         "python": platform.python_version(),
         "platform": platform.platform(),
+        "memory": memory,
         "packages": versions,
         "pkg_resources": pkg_resources,
         "cuda": cuda,
