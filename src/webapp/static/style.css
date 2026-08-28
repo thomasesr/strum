@@ -161,3 +161,5 @@ button { font: inherit; cursor: pointer; border-radius: 8px; }
 .banner .bar { margin-top: .6rem; }
 
 .log-link { text-decoration: none; display: inline-block; line-height: 1.4; }
+
+.ghost.danger:hover { color: var(--bad); border-color: var(--bad); }

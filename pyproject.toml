@@ -60,6 +60,12 @@ dependencies = [
     # Data handling
     "pandas>=2.0.0",
     "tqdm>=4.65.0",
+    "scipy>=1.10.0",
+    "pyyaml>=6.0",
+    "requests>=2.28.0",
+    "huggingface-hub>=0.23.0",
+    # Reads embedded album art out of uploaded files.
+    "mutagen>=1.46.0",
 ]
 
 [project.optional-dependencies]
@@ -78,6 +84,14 @@ karaoke = [
     "audio-separator[cpu]>=0.24.0",
 ]
 
+# Vocals charting: Whisper for lyrics, pyphen for syllable splitting.
+# Without these the vocals stage fails at import and charts silently omit
+# PART VOCALS, which is exactly what happened before they were declared.
+vocals = [
+    "openai-whisper>=20231117",
+    "pyphen>=0.14",
+]
+
 # Web UI: upload audio/video, queue jobs, download CH/YARG packages.
 web = [
     "fastapi>=0.110.0",
@@ -89,6 +103,8 @@ full = [
     "demucs>=4.0.0",
     "basic-pitch>=0.3.0",
     "audio-separator[cpu]>=0.24.0",
+    "openai-whisper>=20231117",
+    "pyphen>=0.14",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.9",

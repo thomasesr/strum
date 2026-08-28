@@ -190,6 +190,7 @@ class Job:
             "packages": sorted(self.packages),
             "duration_s": round(self.duration_s, 1),
             "created_at": self.created_at,
+            "deleted": False,
         }
 
 
@@ -308,6 +309,26 @@ class JobQueue:
         self._set(job, status=Status.CANCELLED, stage="Cancelled", finished_at=time.time())
         return True
 
+    def delete(self, job_id: str) -> bool:
+        """Forget a finished job and remove its files.
+
+        Only terminal jobs: deleting a running one would leave the worker
+        writing into a directory that no longer exists. Cancel it first.
+        """
+        job = self.jobs.get(job_id)
+        if job is None or not job.status.terminal:
+            return False
+        shutil.rmtree(self.job_dir(job_id), ignore_errors=True)
+        del self.jobs[job_id]
+        # Tell subscribers it is gone; the browser drops the row on this.
+        payload = {**job.public(), "deleted": True}
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                self._subscribers.discard(q)
+        return True
+
     # -- worker ------------------------------------------------------------
 
     async def _run_forever(self) -> None:
@@ -375,6 +396,10 @@ class JobQueue:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=str(REPO_ROOT), env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            # The default 64 KiB is not enough: progress bars emit long runs of
+            # carriage-return output with no newline, and overrunning the limit
+            # raises out of the read loop.
+            limit=4 * 1024 * 1024,
         )
         self._current, self._current_id = proc, job.id
         try:
@@ -447,6 +472,14 @@ class JobQueue:
     async def _pump_logs(self, job: Job, proc: asyncio.subprocess.Process) -> None:
         """Stream the child's output into the job log, updating the stage as it goes.
 
+        Reads chunks rather than lines. Progress bars write carriage returns with
+        no newline, so a line-oriented read stalls on them and can overrun the
+        stream limit; that previously truncated the log partway through a run
+        while the job carried on to completion.
+
+        Carriage-return segments are collapsed to the last one of each run, so a
+        progress bar contributes one line instead of thousands.
+
         Also written to disk unabridged: the in-memory copy is capped so a long
         run cannot grow without bound, but a diagnosis usually needs the lines
         before the failure, which are the first to be dropped.
@@ -454,22 +487,54 @@ class JobQueue:
         assert proc.stdout is not None
         path = self.log_path(job.id)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        pending = ""       # text after the last newline
+        progress = ""      # most recent carriage-return segment, not yet emitted
+
+        def emit(line: str, fh) -> None:
+            line = line.rstrip()
+            if not line:
+                return
+            fh.write(line + "\n")
+            job.log.append(line)
+            if len(job.log) > self.max_log_lines:
+                del job.log[: len(job.log) - self.max_log_lines]
+            for marker, label, fraction in STAGE_MARKERS:
+                if marker in line and fraction > job.progress:
+                    self._set(job, stage=label, progress=fraction)
+                    break
+
         with open(path, "w", encoding="utf-8", buffering=1) as fh:
             while True:
-                raw = await proc.stdout.readline()
-                if not raw:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
                     break
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if not line:
-                    continue
-                fh.write(line + "\n")
-                job.log.append(line)
-                if len(job.log) > self.max_log_lines:
-                    del job.log[: len(job.log) - self.max_log_lines]
-                for marker, label, fraction in STAGE_MARKERS:
-                    if marker in line and fraction > job.progress:
-                        self._set(job, stage=label, progress=fraction)
+                pending += chunk.decode("utf-8", errors="replace")
+
+                while True:
+                    nl = pending.find("\n")
+                    if nl < 0:
                         break
+                    segment, pending = pending[:nl], pending[nl + 1:]
+                    # A completed line may itself contain progress redraws;
+                    # only its final state is worth keeping.
+                    if "\r" in segment:
+                        segment = segment.rsplit("\r", 1)[-1]
+                    if progress:
+                        emit(progress, fh)
+                        progress = ""
+                    emit(segment, fh)
+
+                # No newline yet: keep only the latest redraw so the buffer
+                # cannot grow while a progress bar is running.
+                if "\r" in pending:
+                    progress = pending.rsplit("\r", 1)[-1]
+                    pending = progress
+
+            if progress:
+                emit(progress, fh)
+            if pending:
+                emit(pending, fh)
 
     def _cleanup_old(self) -> None:
         """Drop finished jobs and their files once they age out."""

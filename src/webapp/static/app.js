@@ -232,7 +232,14 @@ const STATUS_TEXT = {
   failed: 'Failed', cancelled: 'Cancelled',
 };
 
+function removeJob(id) {
+  jobs.delete(id);
+  document.getElementById(`job-${id}`)?.remove();
+  $('#empty').hidden = jobs.size > 0;
+}
+
 function render(job) {
+  if (job.deleted) return removeJob(job.id);
   jobs.set(job.id, job);
   $('#empty').hidden = jobs.size > 0;
 
@@ -291,8 +298,25 @@ function render(job) {
     const cancel = document.createElement('button');
     cancel.className = 'ghost';
     cancel.textContent = 'Cancel';
-    cancel.onclick = () => fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' });
+    cancel.onclick = () => {
+      cancel.disabled = true;
+      fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' });
+    };
     actions.append(cancel);
+  } else {
+    // Terminal jobs can be cleared out. This also deletes the packages, so it
+    // asks first when there is something still downloadable.
+    const del = document.createElement('button');
+    del.className = 'ghost danger';
+    del.textContent = 'Delete';
+    del.onclick = async () => {
+      const has = (job.packages || []).length;
+      if (has && !confirm(`Delete "${job.title || job.filename}" and its ${has} package(s)?`)) return;
+      del.disabled = true;
+      const res = await fetch(`/api/jobs/${job.id}`, { method: 'DELETE' });
+      if (res.ok) removeJob(job.id); else del.disabled = false;
+    };
+    actions.append(del);
   }
   // Opens the full pipeline output. The main reason a job fails is visible in
   // the status line, but the lines before it are what explain why.

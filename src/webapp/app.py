@@ -355,6 +355,21 @@ async def cancel_job(job_id: str) -> dict:
     return queue.jobs[job_id].public()
 
 
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str) -> dict:
+    """Remove a finished job and its files.
+
+    Running jobs must be cancelled first: deleting one mid-run would pull the
+    directory out from under the worker.
+    """
+    job = queue.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "No such job")
+    if not queue.delete(job_id):
+        raise HTTPException(409, f"Job is {job.status.value}; cancel it first")
+    return {"id": job_id, "deleted": True}
+
+
 @app.get("/api/jobs/{job_id}/download/{fmt}")
 async def download(job_id: str, fmt: str):
     """Serve a finished package.
