@@ -31,7 +31,33 @@ import mido
 # Suppress basic_pitch's optional-backend warnings
 logging.getLogger("root").setLevel(logging.ERROR)
 
-from basic_pitch.inference import predict  # noqa: E402
+from basic_pitch.inference import predict as _basic_pitch_predict  # noqa: E402
+
+from src.preprocessing.gpu import free_memory, rss_gb  # noqa: E402
+
+# Same name the module uses further down, so this is the same logger object.
+_bp_log = logging.getLogger("guitar_basicpitch")
+
+
+def predict(*args, **kwargs):
+    """basic-pitch inference, with the memory it leaves behind reclaimed.
+
+    The guitar stage runs this more than once per song, and TensorFlow does not
+    return what it allocates when a call finishes. Stacked on everything PyTorch
+    is already holding, that is what has been getting the process OOM-killed, so
+    each call reports what it cost and collects afterwards.
+    """
+    before = rss_gb()
+    try:
+        return _basic_pitch_predict(*args, **kwargs)
+    finally:
+        after = rss_gb()
+        if before is not None and after is not None:
+            _bp_log.info(
+                f"  basic-pitch RSS: {before:.2f} -> {after:.2f} GB "
+                f"(+{after - before:.2f} GB)"
+            )
+        free_memory("basic-pitch")
 
 # Optional torch import for learned mapper
 try:

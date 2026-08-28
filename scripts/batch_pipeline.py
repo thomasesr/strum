@@ -43,6 +43,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from src.preprocessing.gpu import free_memory  # noqa: E402
+
 
 @dataclass
 class SongResult:
@@ -1933,6 +1935,7 @@ song_length = {duration_ms}
             except Exception as e:
                 errors.append(f"drums: {e}")
                 logger.warning(f"  ⚠ Drums failed: {e}")
+            free_memory("drums")
         
         # Guitar - prefer dedicated guitar stem (htdemucs_6s), fallback to other
         guitar_stem = stems.get("guitar") or stems.get("other")
@@ -1947,6 +1950,7 @@ song_length = {duration_ms}
             except Exception as e:
                 errors.append(f"guitar: {e}")
                 logger.warning(f"  ⚠ Guitar failed: {e}")
+            free_memory("guitar")
         
         # Keys - prefer dedicated piano stem (htdemucs_6s), fallback to other
         keys_stem = stems.get("piano") or stems.get("other")
@@ -1961,6 +1965,7 @@ song_length = {duration_ms}
             except Exception as e:
                 errors.append(f"keys: {e}")
                 logger.warning(f"  ⚠ Keys failed: {e}")
+            free_memory("keys")
         
         # Bass
         if "bass" in stems:
@@ -1972,6 +1977,7 @@ song_length = {duration_ms}
             except Exception as e:
                 errors.append(f"bass: {e}")
                 logger.warning(f"  ⚠ Bass failed: {e}")
+            free_memory("bass")
         
         # Vocals
         if "vocals" in stems:
@@ -1985,6 +1991,7 @@ song_length = {duration_ms}
             except Exception as e:
                 errors.append(f"vocals: {e}")
                 logger.warning(f"  ⚠ Vocals failed: {e}")
+            free_memory("vocals")
         
         # Check if we have ANY transcribed content
         has_content = any([
