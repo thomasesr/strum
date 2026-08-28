@@ -42,6 +42,8 @@ services:
       # Keeps the ~900 MB karaoke model on the volume instead of a temp dir,
       # where it would be re-downloaded on every restart.
       STRUM_KARAOKE_MODEL_DIR: "/models/audio-separator"
+      # Vocals charting is the heaviest stage; drop to "small" if memory is tight.
+      STRUM_WHISPER_MODEL: "${STRUM_WHISPER_MODEL:-medium}"
       # Set to 0 if you populate the checkpoint volume yourself.
       STRUM_FETCH_CHECKPOINTS: "${STRUM_FETCH_CHECKPOINTS:-1}"
 

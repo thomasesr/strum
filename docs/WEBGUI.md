@@ -261,6 +261,23 @@ All via environment variables; the container reads the same ones.
 | `STRUM_WEB_RETAIN_HOURS` | `24` | How long finished jobs and their files survive. |
 | `STRUM_WEB_LOG_LEVEL` | `INFO` | Server log level. |
 
+Vocals charting has its own knobs, since it is the most memory-hungry stage:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STRUM_WHISPER_MODEL` | `medium` | `tiny`, `base`, `small`, `medium`, `large-v3`. Drop to `small` if memory is tight. |
+| `STRUM_WHISPER_COMPUTE` | `float16` on GPU, `int8` on CPU | CTranslate2 compute type; `int8_float16` trades a little accuracy for less VRAM. |
+| `STRUM_WHISPER_LANGUAGE` | `en` | Forced language. Blank to auto-detect. |
+
+It runs on [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — the same
+weights through CTranslate2, at roughly a third of the memory of the reference
+implementation. That matters because this stage starts with PyTorch and
+TensorFlow already resident. If only `openai-whisper` is installed the charter
+uses that instead, so existing environments keep working.
+
+The model itself downloads on first vocal run (about 1.5 GB for `medium`) into
+the models volume.
+
 Compose adds two more for the host side: `STRUM_BIND` (default `127.0.0.1`) and
 `STRUM_PORT` (default `8000`), which is where the published port lands.
 

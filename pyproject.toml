@@ -87,8 +87,13 @@ karaoke = [
 # Vocals charting: Whisper for lyrics, pyphen for syllable splitting.
 # Without these the vocals stage fails at import and charts silently omit
 # PART VOCALS, which is exactly what happened before they were declared.
+#
+# faster-whisper rather than openai-whisper: same weights via CTranslate2, at
+# roughly a third of the memory. This stage loads after PyTorch and TensorFlow
+# are already resident, and it is where the pipeline has been OOM-killed.
+# The charter still falls back to openai-whisper if that is what is installed.
 vocals = [
-    "openai-whisper>=20231117",
+    "faster-whisper>=1.0.0",
     "pyphen>=0.14",
 ]
 
@@ -103,7 +108,7 @@ full = [
     "demucs>=4.0.0",
     "basic-pitch>=0.3.0",
     "audio-separator[cpu]>=0.24.0",
-    "openai-whisper>=20231117",
+    "faster-whisper>=1.0.0",
     "pyphen>=0.14",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",

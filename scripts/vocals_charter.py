@@ -9,6 +9,7 @@ Clone Hero Vocals Format:
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,59 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from lyrics.fetcher import fetch_lyrics, extract_artist_title_from_path, LyricsResult, SyncedLyric
 
 logger = logging.getLogger(__name__)
+
+def _load_asr(model_name: str, device: str, compute_type: str = ""):
+    """Load the speech model, preferring faster-whisper.
+
+    faster-whisper runs the same weights through CTranslate2 at roughly a third
+    of the memory and several times the speed. That matters here: this stage
+    starts with PyTorch and TensorFlow already resident, and the run has been
+    OOM-killed at exactly this point.
+
+    Returns (backend_name, model). Falls back to openai-whisper when
+    faster-whisper is not installed, so existing environments keep working.
+    """
+    dev = "cuda" if str(device).startswith("cuda") else "cpu"
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        import whisper
+
+        logger.info(f"Loading Whisper model (openai-whisper): {model_name}")
+        return "openai-whisper", whisper.load_model(model_name, device=device)
+
+    # float16 on GPU, int8 on CPU: the defaults faster-whisper is tuned for.
+    ct = compute_type or ("float16" if dev == "cuda" else "int8")
+    logger.info(f"Loading Whisper model (faster-whisper): {model_name} [{dev}/{ct}]")
+    return "faster-whisper", WhisperModel(model_name, device=dev, compute_type=ct)
+
+
+def _iter_words(backend: str, model, audio_path: str, language: str = "en"):
+    """Yield (word, start, end) from either backend.
+
+    The two APIs differ enough to be worth normalising once here rather than
+    branching at every use: faster-whisper streams dataclass segments, while
+    openai-whisper returns nested dicts.
+    """
+    lang = language or None
+    if backend == "faster-whisper":
+        segments, _info = model.transcribe(
+            str(audio_path), word_timestamps=True, language=lang
+        )
+        for segment in segments:
+            for w in (segment.words or []):
+                yield w.word, float(w.start), float(w.end)
+        return
+
+    result = model.transcribe(str(audio_path), word_timestamps=True, language=lang)
+    for segment in result.get("segments", []):
+        for w in segment.get("words", []):
+            yield (
+                w.get("word", ""),
+                float(w.get("start") or 0.0),
+                float(w.get("end") or 0.0),
+            )
+
 
 
 @dataclass
@@ -69,17 +123,21 @@ class VocalsCharter:
     
     def __init__(
         self,
-        whisper_model: str = "medium",  # tiny, base, small, medium, large
+        whisper_model: str = os.environ.get("STRUM_WHISPER_MODEL", "medium"),
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         harmony_threshold: float = 0.3,  # Harmony volume relative to lead
         pitch_change_threshold: float = 5.0,  # Semitones to trigger syllable split (raised — only true big leaps split)
         fetch_lyrics_online: bool = True,  # Try web sources before Whisper
         timing_offset: float = 0.0,  # Static offset disabled — dynamic alignment handles latency
         dynamic_alignment: bool = True,  # Enable onset-based dynamic alignment
-        alignment_tolerance: float = 0.06,  # Max time to shift a word to reach onset (was 0.15 — caused mis-snaps to nearby breaths/harmonics)
+        alignment_tolerance: float = 0.06,
+        compute_type: str = os.environ.get("STRUM_WHISPER_COMPUTE", ""),
+        language: str = os.environ.get("STRUM_WHISPER_LANGUAGE", "en"),  # Max time to shift a word to reach onset (was 0.15 — caused mis-snaps to nearby breaths/harmonics)
     ):
         self.whisper_model_name = whisper_model
         self.device = device
+        self.compute_type = compute_type
+        self.language = language
         self.harmony_threshold = harmony_threshold
         self.pitch_change_threshold = pitch_change_threshold
         self.fetch_lyrics_online = fetch_lyrics_online
@@ -88,6 +146,7 @@ class VocalsCharter:
         self.alignment_tolerance = alignment_tolerance
         
         self._whisper_model = None
+        self._whisper_backend = ""
         self._hyphenator = pyphen.Pyphen(lang='en')
         self._cached_onsets = None  # Cache vocal onsets for reuse
         
@@ -100,11 +159,8 @@ class VocalsCharter:
     def _load_whisper(self):
         """Lazy load Whisper model."""
         if self._whisper_model is None:
-            import whisper
-            logger.info(f"Loading Whisper model: {self.whisper_model_name}")
-            self._whisper_model = whisper.load_model(
-                self.whisper_model_name,
-                device=self.device
+            self._whisper_backend, self._whisper_model = _load_asr(
+                self.whisper_model_name, self.device, self.compute_type
             )
         return self._whisper_model
     
@@ -127,30 +183,18 @@ class VocalsCharter:
         model = self._load_whisper()
         
         # Transcribe with word timestamps
-        result = model.transcribe(
-            audio_path,
-            word_timestamps=True,
-            language="en"  # Can be made configurable
+        raw_words = _iter_words(
+            self._whisper_backend, model, audio_path, self.language
         )
         
         # Extract words with timestamps and apply timing offset
         words = []
-        for segment in result.get("segments", []):
-            for word_info in segment.get("words", []):
-                # Apply timing offset to compensate for Whisper detection latency
-                # Negative offset shifts words earlier (to match visual timing)
-                start = word_info.get('start', 0) + self.timing_offset
-                end = word_info.get('end', 0) + self.timing_offset
-                
-                # Clamp to non-negative (can't start before 0)
-                start = max(0, start)
-                end = max(start + 0.01, end)  # Ensure end > start
-                
-                words.append({
-                    'word': word_info.get('word', '').strip(),
-                    'start': start,
-                    'end': end
-                })
+        for word, w_start, w_end in raw_words:
+            # Apply timing offset to compensate for detection latency; a
+            # negative offset shifts words earlier, to match visual timing.
+            start = max(0, w_start + self.timing_offset)
+            end = max(start + 0.01, w_end + self.timing_offset)
+            words.append({'word': word.strip(), 'start': start, 'end': end})
         
         logger.info(f"Transcribed {len(words)} words (timing offset: {self.timing_offset:+.3f}s)")
         
