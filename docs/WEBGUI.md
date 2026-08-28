@@ -288,11 +288,12 @@ Ways to lower the peak, roughly in order of preference:
 
 - Give the host more RAM, or add a swapfile **on disk**. Charting is not
   latency-sensitive, so swapping is an acceptable trade here.
-- Check what your swap actually is. `zram` is compressed memory that lives in
-  RAM: it competes for the same bytes rather than adding to them, so a host
-  whose only swap is zram has nowhere to spill when a stage spikes, however
-  large `SwapTotal` looks. `/api/diagnostics` reports `real_swap_gb` separately
-  for exactly this reason.
+- Check what your swap actually is. `zram` holds compressed pages in RAM, so it
+  is bounded by physical memory and only helps by whatever ratio the pages
+  compress to. Model weights and audio buffers are float data that compresses
+  close to 1:1, so a `SwapTotal` made up entirely of zram is close to no
+  headroom for this workload. `/api/diagnostics` reports `real_swap_gb`
+  separately for that reason.
 
   ```bash
   sudo fallocate -l 16G /swapfile

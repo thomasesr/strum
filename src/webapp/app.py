@@ -447,9 +447,11 @@ async def diagnostics() -> dict:
         }
 
         # SwapTotal counts zram, which is compressed memory living in RAM
-        # rather than storage. It is not extra capacity -- it competes for the
-        # same bytes -- so a host whose only swap is zram has no room to spill
-        # into when a stage spikes, however large SwapTotal looks.
+        # rather than on storage. It does buy capacity, but only by whatever
+        # ratio the pages compress to, and it can never exceed physical RAM.
+        # Model weights and audio tensors are float data that compresses close
+        # to 1:1, so on this workload a large SwapTotal made up of zram is close
+        # to no headroom at all -- which is worth reporting separately.
         devices = []
         real_swap = 0
         swaps = Path("/proc/swaps")
@@ -472,9 +474,10 @@ async def diagnostics() -> dict:
         memory["real_swap_gb"] = round(real_swap / 1e9, 1)
         if devices and not real_swap:
             memory["note"] = (
-                "All swap is zram (compressed RAM). It shares the same physical "
-                "memory rather than adding to it, so there is nowhere to spill "
-                "when a stage spikes. Add a swapfile on disk for real headroom."
+                "All swap is zram: compressed pages held in RAM, capped by "
+                "physical memory. Float tensors compress close to 1:1, so this "
+                "adds little usable headroom for charting. A swapfile on disk "
+                "would give real spill space."
             )
         limit = Path("/sys/fs/cgroup/memory.max")
         if limit.exists():
