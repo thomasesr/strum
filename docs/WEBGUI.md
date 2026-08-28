@@ -66,12 +66,27 @@ Layers are ordered so the expensive step survives ordinary work:
 | You changed | What rebuilds |
 |---|---|
 | Anything under `src/`, `scripts/`, `configs/` | Just the `COPY`. Seconds. |
-| `pyproject.toml` | Dependency install re-runs, but wheels come from the cache mount. |
-| `docker/Dockerfile` above the install | Everything after the edit; downloads still cached. |
+| `pyproject.toml` | The project install only. The heavy packages stay put. |
+| `docker/requirements-heavy.txt` | TensorFlow, Demucs, audio-separator and the diffq compile. |
+| The torch line in the Dockerfile | Everything from there down. |
 
-Dependencies are resolved against a stub `src/` package, so editing sources
-cannot invalidate the install layer. The real sources are copied afterwards and
-the editable install picks them up from the same path.
+Installs are split so the expensive ones survive ordinary work:
+
+1. **torch / torchaudio / torchvision** from the CUDA index — ~3 GB, effectively never changes.
+2. **`docker/requirements-heavy.txt`** — TensorFlow, Demucs, audio-separator, and
+   the from-source `diffq` build. Keyed on that file alone.
+3. **`pip install -e '.[full,web]'`** — resolved against a stub `src/` package.
+   Everything expensive is already satisfied, so this is fast.
+4. **`COPY src scripts configs`** — the real sources.
+
+Step 2 exists purely for cache behaviour. Folding those packages into step 3
+would mean every `pyproject.toml` edit reinstalled several GB. The file mirrors
+the specs in `pyproject.toml` rather than pinning versions, so it stays a
+build-ordering hint rather than a second source of truth -- step 3 is still what
+resolves the real dependency set.
+
+Editing sources cannot invalidate any install layer: the stub package means the
+editable install points at `/app/src` either way.
 
 Prefer plain `build` and let the layer cache work:
 

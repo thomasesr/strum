@@ -37,13 +37,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 WORKDIR /app
 
-# The base image ships pip 24.0, which skips wheels whose metadata it cannot
+# Two separate fixes in one line.
+#
+# pip: the base image ships 24.0, which skips wheels whose metadata it cannot
 # parse and backtracks instead. On scikit-learn that lands on a pre-wheel
-# release that builds through the removed numpy.distutils. Upgrading first keeps
-# the resolver on the versions this dependency set was verified against.
-# setuptools is pinned below 81, which is where pkg_resources was removed.
-# Several dependencies still import it, and its absence surfaces as unrelated
-# failures deep in the pipeline rather than at install time.
+# release that builds through the removed numpy.distutils.
+#
+# setuptools: pinned below 81, where pkg_resources was removed. Several
+# dependencies still import it, and its absence surfaces as unrelated failures
+# deep in the pipeline rather than as an install error.
+#
+# This layer is upstream of every install below, so changing it rebuilds all of
+# them. The cache mounts still spare the downloads.
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install --upgrade pip wheel "setuptools<81"
 
@@ -58,23 +63,30 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install --index-url https://download.pytorch.org/whl/cu126 \
         torch torchaudio torchvision
 
-# Dependencies are resolved from pyproject.toml alone, against a stub package.
-# Editing anything under src/ therefore cannot invalidate this layer -- the real
-# sources are copied in afterwards, and the editable install points at the same
-# path either way.
+# The heavy dependencies go in first, keyed only on their own file. Installing
+# them as part of the project below would mean every pyproject.toml edit
+# reinstalled several GB. See the file for what belongs in it.
 #
 # diffq is a hard audio-separator dependency on Linux and publishes no cp311
 # wheel at any version, so it always compiles from source. The toolchain is
 # installed and removed inside one layer so it never reaches the final image.
-COPY pyproject.toml README.md ./
+COPY docker/requirements-heavy.txt ./docker/
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    mkdir -p src && touch src/__init__.py \
-    && apt-get update \
+    apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
-    && pip install -e '.[full,web]' \
+    && pip install -r docker/requirements-heavy.txt \
     && apt-get purge -y --auto-remove build-essential
+
+# The project itself, resolved against a stub package so that editing anything
+# under src/ cannot invalidate this layer -- the real sources are copied in
+# afterwards and the editable install points at the same path either way.
+# Everything expensive is already satisfied by the layer above, so this is fast.
+COPY pyproject.toml README.md ./
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    mkdir -p src && touch src/__init__.py \
+    && pip install -e '.[full,web]'
 
 COPY src ./src
 COPY scripts ./scripts

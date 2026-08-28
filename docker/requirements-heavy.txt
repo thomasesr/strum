@@ -1,0 +1,31 @@
+# Heavy, slow-moving dependencies, installed in their own layer.
+#
+# Why this file exists: these packages are several GB installed, and one of them
+# (diffq) compiles from source. If they were installed as part of
+# `pip install -e '.[full,web]'`, every edit to pyproject.toml -- adding a small
+# dependency, bumping a version, changing metadata -- would invalidate the layer
+# and reinstall all of it.
+#
+# Kept deliberately loose: these mirror the specs in pyproject.toml rather than
+# pinning versions, so this file is a build-ordering hint and not a second
+# source of truth. The project install still runs afterwards and is what
+# actually resolves the dependency set; by then these are already satisfied, so
+# it is fast and touches nothing large.
+#
+# torch, torchaudio and torchvision are NOT here -- they come from the CUDA
+# index in an earlier layer, and must not be resolved from PyPI.
+#
+# Add a package here only when it is large or slow to build. Anything else
+# belongs in pyproject.toml alone.
+
+# Pulls TensorFlow (~600 MB); the reason Python is pinned to 3.11.
+basic-pitch>=0.3.0
+
+# Pulls diffq, which has no cp311 wheel and compiles from source.
+demucs>=4.0.0
+audio-separator[cpu]>=0.24.0
+
+# Large compiled wheels in their own right, and shared by everything above.
+librosa>=0.10.0
+numpy>=1.24.0
+pandas>=2.0.0
