@@ -40,6 +40,34 @@ chart pairs (see `docs/ARCHITECTURE.md` and the Performance section in
 - ☐ Genre-specific drum classifier variants (metal, jazz, electronic)
 - ☐ Multi-take training data from charter community
 
+## Vocals: lyric synchronisation
+
+Vocal charting currently takes its word timings from Whisper. Those are accurate
+to roughly a syllable, which is enough for a playable chart but visibly loose
+against the beat on sustained notes.
+
+**Evaluated: `Karaoke-Timed-Lyrics-Qwen3-0.6B`** (and its GGUF quantisations).
+Not usable for this. It is a 0.6B *text* model fine-tuned from Qwen3-0.6B: it
+takes chat messages and emits text, and consumes no audio at any point. It can
+produce plausible-looking timings for a set of lyrics, but nothing ties those
+timings to the recording in front of it, so they would be invented rather than
+measured. Synchronisation is an alignment problem, and alignment needs the
+audio.
+
+Worth trying instead, in rough order of effort:
+
+- ☐ **Forced alignment against fetched lyrics.** `src/lyrics/fetcher.py` already
+  retrieves the real words. Aligning known text to audio is a much easier and
+  better-posed problem than transcribing it, and it removes Whisper's
+  mishearings from the chart entirely. `ctc-forced-aligner` or WhisperX's
+  alignment stage are the obvious candidates.
+- ☐ **Onset snapping against the isolated vocal.** The karaoke pass already
+  produces a clean lead-vocal stem; vocal onsets in it are a strong timing
+  signal, and the charter's `dynamic_alignment` does a limited version of this
+  already.
+- ☐ **Syllable-level alignment**, so held notes get their syllables spread
+  across the sustain rather than bunched at the onset.
+
 ## Hardware
 
 - **Training**: NVIDIA DGX Spark (GB10, 12 GB)

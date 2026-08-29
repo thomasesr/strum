@@ -81,7 +81,7 @@ pitch = [
 # The BS-RoFormer SW 6-stem backend needs a ZFTurbo MSST checkout instead —
 # see docs/SEPARATION.md.
 karaoke = [
-    "audio-separator[cpu]>=0.24.0",
+    "audio-separator[gpu]>=0.24.0",
 ]
 
 # Vocals charting: Whisper for lyrics, pyphen for syllable splitting.
@@ -107,7 +107,7 @@ web = [
 full = [
     "demucs>=4.0.0",
     "basic-pitch>=0.3.0",
-    "audio-separator[cpu]>=0.24.0",
+    "audio-separator[gpu]>=0.24.0",
     "faster-whisper>=1.0.0",
     "pyphen>=0.14",
     "fastapi>=0.110.0",

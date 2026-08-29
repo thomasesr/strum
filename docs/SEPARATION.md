@@ -71,13 +71,38 @@ Known checkpoints:
 so every downstream stage is unaffected by the choice.
 
 - `demucs` (default) — `htdemucs_6s` through the Demucs Python API.
-- `bs_roformer_sw` — [BS-RoFormer SW](https://huggingface.co/jarredou/BS-ROFO-SW-Fixed)
+- `bs_roformer_sw` — [BS-RoFormer SW](https://huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx)
   (`bs_6stem_fixed.ckpt` + `bs_6stem_fixed_config.yaml`) through MSST. Holds up
   better on dense mixes, which matters most for `guitar` and `other`.
 
 The `STRUM_DRUMS_DEMUCS` specialist pass still runs on top of either backend:
 the drums models were tuned on `htdemucs_ft` drum stems, so that stem is
 re-extracted with Demucs regardless of the Stage 1 choice.
+
+### Why BS-RoFormer runs through ONNX
+
+Neither of the obvious routes to this model works here:
+
+- **audio-separator** carries it, but only from 0.42 onward, and every version
+  from 0.42 requires `numpy>=2`. TensorFlow 2.15 -- pulled in by basic-pitch for
+  guitar and bass -- requires `numpy<2`. pip therefore pins audio-separator to
+  0.30.2, whose registry has no 6-stem RoFormer at all.
+- **MSST** fails for the same reason: its inference entry point imports `peft`,
+  which also wants numpy 2.
+
+The [ONNX export](https://huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx)
+needs only ONNX Runtime, which is already installed. The model takes a fixed
+4-second window (345 STFT frames), so audio is processed in chunks and
+recombined by overlap-add.
+
+Verified against the reference vectors published with the model: STFT to
+1.8e-07, the model call to 1.0e-06, iSTFT to 5.6e-09, and overlap-add
+reconstruction to 3e-05 (about -90 dB).
+
+The CUDA execution provider matters here: on CPU the model runs about 8.6 s per
+4-second chunk, roughly 17 minutes for a 6-minute song. `audio-separator[gpu]`
+supplies `onnxruntime-gpu` for it, and the backend falls back to CPU with a
+warning if no GPU provider loads.
 
 ## VRAM
 

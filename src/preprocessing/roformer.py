@@ -42,7 +42,10 @@ STEM_ALIASES = {"piano": ["piano", "keys", "keyboard"]}
 class RoformerConfig:
     """Settings for the BS-RoFormer SW 6-stem pass."""
 
-    # audio-separator registry name; used unless an MSST checkpoint is given.
+    # ONNX export: the only backend that can serve this model here, since every
+    # audio-separator version carrying it requires numpy>=2. See roformer_onnx.
+    onnx_model: Path | None = None
+    # audio-separator registry name, for versions new enough to carry it.
     model: str = "BS-Roformer-SW.ckpt"
     model_dir: Path | None = None
     ckpt: Path | None = None
@@ -59,6 +62,7 @@ class RoformerConfig:
             return Path(raw) if raw else None
 
         c = cls(**overrides)
+        c.onnx_model = _path("STRUM_ROFORMER_ONNX") or c.onnx_model
         c.model = os.environ.get("STRUM_ROFORMER_MODEL", c.model)
         c.model_dir = _path("STRUM_ROFORMER_MODEL_DIR") or _path("STRUM_KARAOKE_MODEL_DIR") or c.model_dir
         c.ckpt = _path("STRUM_ROFORMER_CKPT") or c.ckpt
@@ -144,9 +148,16 @@ def separate_6stem_roformer(
             if (output_dir / f"{s}.wav").exists()
         }
 
-    # An explicit MSST checkpoint wins; otherwise the model comes from the
-    # audio-separator registry, which carries this one and fetches it on demand.
-    backend = "msst" if (cfg.ckpt and cfg.cfg) else "audio-separator"
+    # ONNX first: it is the only backend that works alongside basic-pitch, which
+    # pins numpy<2. An explicit MSST checkpoint overrides it for anyone who has
+    # a working checkout; audio-separator is the last resort and only succeeds
+    # on versions new enough to list the model.
+    if cfg.onnx_model and Path(cfg.onnx_model).exists():
+        backend = "onnx"
+    elif cfg.ckpt and cfg.cfg:
+        backend = "msst"
+    else:
+        backend = "audio-separator"
 
     work = output_dir / "_roformer_tmp"
     if work.exists():
@@ -156,6 +167,19 @@ def separate_6stem_roformer(
     logger.info(f"  Separating stems with BS-RoFormer SW ({backend})...")
     t0 = time.time()
     try:
+        if backend == "onnx":
+            from src.preprocessing.roformer_onnx import separate as onnx_separate
+
+            def _log_progress(done: int, total: int) -> None:
+                if done == 1 or done == total or done % 20 == 0:
+                    logger.info(f"    BS-RoFormer chunk {done}/{total}")
+
+            stems = onnx_separate(
+                audio_path, output_dir, Path(cfg.onnx_model), on_progress=_log_progress
+            )
+            logger.info(f"    BS-RoFormer done in {time.time() - t0:.1f}s -> {sorted(stems)}")
+            return stems
+
         if backend == "msst":
             produced = run_msst(
                 audio_path, work,

@@ -46,6 +46,12 @@ KARAOKE_MODEL_DIR = Path(
 
 # MSST-format weights, for the backends audio-separator does not carry.
 MVSEP_REPO = "noblebarkrr/mvsepless_resources"
+# ONNX export of BS-RoFormer SW. fp16 is half the size of fp32 and matches the
+# published reference vectors to ~1e-6, which is well below anything audible.
+ROFORMER_ONNX_REPO = "elicwhite/bs-roformer-sw-6stem-onnx"
+ROFORMER_ONNX_FILE = os.environ.get(
+    "STRUM_ROFORMER_ONNX_FILE", "bs_roformer_sw_6stem_fp16.onnx"
+)
 MSST_REPO_URL = "https://github.com/ZFTurbo/Music-Source-Separation-Training"
 MSST_DIR = Path(os.environ.get("STRUM_MSST_DIR") or (SEPARATION_DIR / "msst"))
 ROFORMER_CKPT = "bs_roformer/bs_6stem_fixed.ckpt"
@@ -201,14 +207,19 @@ def ensure_karaoke_model() -> None:
 def ensure_roformer_model() -> None:
     """Pre-download BS-RoFormer SW, when that backend is selected.
 
-    Only runs when selected: it is ~700 MB and Demucs is the default. It comes
-    from the audio-separator registry, the same route as the karaoke model, so
-    there is no MSST checkout or separate checkpoint path to manage.
+    Fetches the ONNX export rather than the original checkpoint. Every
+    audio-separator release that carries this model requires numpy>=2, and
+    TensorFlow 2.15 -- which basic-pitch needs for guitar and bass -- requires
+    numpy<2, so the two cannot coexist. MSST is out for the same reason via
+    peft. ONNX Runtime is already installed and has no such constraint.
+
+    Only runs when the backend is selected: the file is ~350 MB and Demucs is
+    the default.
     """
     if os.environ.get("STRUM_SEPARATOR", "demucs").strip().lower() not in (
         "bs_roformer_sw", "bs_roformer", "roformer"
     ):
-        logger.info("BS-RoFormer SW not selected; skipping its 700 MB download")
+        logger.info("BS-RoFormer SW not selected; skipping its download")
         separation.steps["roformer"] = "skipped (not selected)"
         return
 
@@ -221,23 +232,11 @@ def ensure_roformer_model() -> None:
         _ensure_msst_checkout()
         return
 
-    model_dir = cfg.model_dir or KARAOKE_MODEL_DIR
-    model_dir.mkdir(parents=True, exist_ok=True)
-    if (model_dir / cfg.model).exists():
-        logger.info(f"BS-RoFormer SW model present: {cfg.model}")
-        return
-
-    from audio_separator.separator import Separator
-
-    logger.info(f"Fetching {cfg.model} into {model_dir}")
-    sep = Separator(
-        model_file_dir=str(model_dir),
-        output_dir=str(model_dir / "_scratch"),
-        log_level=logging.WARNING,
-    )
-    sep.download_model_files(cfg.model) if hasattr(sep, "download_model_files") \
-        else sep.load_model(model_filename=cfg.model)
-    logger.info("BS-RoFormer SW model ready")
+    dest = SEPARATION_DIR / "roformer" / ROFORMER_ONNX_FILE
+    _hf_download(ROFORMER_ONNX_REPO, ROFORMER_ONNX_FILE, dest)
+    # The pipeline runs as a child of this process and inherits the environment.
+    os.environ.setdefault("STRUM_ROFORMER_ONNX", str(dest))
+    logger.info(f"BS-RoFormer SW ONNX ready: {dest}")
 
 
 def _ensure_msst_checkout() -> None:

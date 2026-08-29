@@ -23,7 +23,10 @@ basic-pitch>=0.3.0
 
 # Pulls diffq, which has no cp311 wheel and compiles from source.
 demucs>=4.0.0
-audio-separator[cpu]>=0.24.0
+# [gpu] rather than [cpu]: it brings onnxruntime-gpu, which the BS-RoFormer ONNX
+# backend needs for the CUDA execution provider. On CPU that model runs about
+# 8.6 s per 4-second chunk -- roughly 17 minutes for a 6-minute song.
+audio-separator[gpu]>=0.24.0
 
 # Large compiled wheels in their own right, and shared by everything above.
 librosa>=0.10.0
