@@ -31,7 +31,16 @@ import mido
 # Suppress basic_pitch's optional-backend warnings
 logging.getLogger("root").setLevel(logging.ERROR)
 
+# Importing basic-pitch pulls in TensorFlow, which installs absl's logging
+# handler on the root logger and resets its level. Everything the pipeline logs
+# at INFO after this point would otherwise vanish -- which is exactly what hid
+# the vocals stage, successful or not, from every log we looked at.
+_root_logger = logging.getLogger()
+_root_level = _root_logger.level
+
 from basic_pitch.inference import predict as _basic_pitch_predict  # noqa: E402
+
+_root_logger.setLevel(_root_level)
 
 from src.preprocessing.gpu import free_memory, rss_gb  # noqa: E402
 
@@ -48,9 +57,12 @@ def predict(*args, **kwargs):
     each call reports what it cost and collects afterwards.
     """
     before = rss_gb()
+    level = _root_logger.level
     try:
         return _basic_pitch_predict(*args, **kwargs)
     finally:
+        # TensorFlow can reset this again on first use, not just on import.
+        _root_logger.setLevel(level)
         after = rss_gb()
         if before is not None and after is not None:
             _bp_log.info(
